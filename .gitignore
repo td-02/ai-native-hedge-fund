@@ -4,3 +4,5 @@ __pycache__/
 outputs/*.csv
 logs/*
 .env
+
+outputs/.yfinance_cache/
