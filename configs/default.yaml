@@ -1,0 +1,26 @@
+portfolio:
+  symbols: [SPY, QQQ, IWM, TLT, GLD]
+  start_date: '2020-01-01'
+  end_date: null
+  lookback_days: 126
+  max_weight: 0.30
+  gross_limit: 1.00
+  rebalance_every_n_days: 5
+
+costs:
+  transaction_cost_bps: 5
+  slippage_bps: 2
+
+risk:
+  target_annual_vol: 0.15
+  min_annual_vol_floor: 0.10
+
+agent:
+  enable_ollama_overlay: false
+  ollama_model: llama3.1:8b
+  ollama_url: http://localhost:11434/api/generate
+
+execution:
+  broker: alpaca_paper
+  alpaca_base_url: https://paper-api.alpaca.markets
+  min_order_notional: 10
