@@ -9,9 +9,15 @@ Data ingest -> Research Agent -> Strategy Ensemble -> Fund Manager -> Risk Manag
 - Market/Data: pulls OHLCV from yfinance.
 - Research Agent: RSS headline analysis (deterministic), optional LangChain + local Ollama overlay.
 - Strategy Agents: trend, mean reversion, volatility carry, regime switching, event-driven.
+- Alpha Pipeline Agents: earnings momentum, FII/DII proxy flow, options-flow proxy, short-interest proxy, block-deal proxy.
+- Cross-Asset Arbitrage Agents: NSE/BSE arb hook, cash-futures basis, ETF NAV arb, ADR arb hook.
+- Macro Intelligence Agents: RBI policy hook, global carry, crude-gold correlation, rupee regime.
+- Research Council (LLM-native): researcher/news/peer/synthesis multi-agent ranking.
+- Adaptive Learning Layer: Bayesian-style weight drift and decay updates.
+- Private Data Alpha Hooks: bulk deals, margin pressure, F&O lot changes, corp-action arb.
 - Fund Manager: combines strategy scores into target weights.
 - Risk Manager: hard clamps, volatility scaling, drawdown brake.
-- Execution Agent: Alpaca paper or local stub.
+- Execution Agent: broker failover router (Alpaca -> Zerodha/Upstox/Angel hooks -> stub), TWAP/VWAP-style slicing, impact and session guards.
 - Audit Agent: hash-linked event log for reproducibility.
 - Resilience Layer: circuit breakers, retries/backoff, degraded mode, dead-man heartbeat.
 
@@ -68,6 +74,11 @@ python scripts/run_realtime.py --poll-seconds 300 --max-cycles 0
 Paper execution loop:
 ```bash
 python scripts/run_realtime.py --execute --poll-seconds 300 --max-cycles 0
+```
+
+Paper-trading server entrypoint:
+```bash
+python scripts/live.py --config configs/live_stub.yaml --poll-seconds 300 --max-cycles 0
 ```
 
 ## Backtest

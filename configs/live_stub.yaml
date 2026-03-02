@@ -38,20 +38,9 @@ strategies:
 
 alpha_pipeline:
   blend_weight: 0.15
-  enabled_signals:
-    - earnings_momentum
-    - fii_dii_flow
-    - options_flow
-    - short_interest
-    - block_deals
 
 arbitrage:
   blend_weight: 0.10
-  enabled_signals:
-    - nse_bse_price_arb
-    - cash_futures_basis
-    - etf_nav_arb
-    - adr_arb
 
 microstructure:
   blend_weight: 0.05
@@ -110,13 +99,7 @@ alerts:
     strategy_disagreement: 0.70
 
 execution:
-  broker: alpaca_paper
-  primary_broker: alpaca_paper
-  backup_brokers: [zerodha_kite, upstox, angel_one, stub]
-  alpaca_base_url: https://paper-api.alpaca.markets
-  min_order_notional: 10
-  order_style: twap
-  twap_slices: 3
-  max_participation_adv: 0.10
-  adv_notional_default: 2000000
+  broker: stub
+  primary_broker: stub
+  backup_brokers: [stub]
   market_mode: us

@@ -8,13 +8,22 @@ from typing import Callable, TypeVar
 import pandas as pd
 
 from .alerts import AlertManager
+from .advanced_alpha import (
+    AdaptiveLearningLayer,
+    AlphaPipelineAgents,
+    CrossAssetArbitrageAgents,
+    MacroIntelligenceAgents,
+    MicrostructureAgents,
+    PrivateDataAlphaAgents,
+)
 from .audit import AuditLedger
+from .brokers import build_broker_router
 from .contracts import DecisionCycle, sha256_hex
 from .data import download_close_prices
 from .data_quality import DataQualityAgent
 from .healthcheck import HealthMonitor
-from .paper import AlpacaPaperBroker, PaperBrokerStub
 from .regime import MacroRegimeAgent, RegimeSnapshot
+from .research_council import LLMResearchCouncil
 from .research import ResearchAgent
 from .resilience import BreakerRegistry
 from .strategy_stack import FundManagerAgent, RiskManagerAgent, StrategyEnsembleAgent
@@ -64,6 +73,20 @@ class CentralizedHedgeFundSystem:
             retry_base_delay_sec=float(acfg.get("retry_base_delay_sec", 0.4)),
         )
         self.strategy = StrategyEnsembleAgent(strategy_weights=scfg["weights"])
+        self.alpha_pipeline = AlphaPipelineAgents()
+        self.arbitrage = CrossAssetArbitrageAgents()
+        self.macro_intel = MacroIntelligenceAgents()
+        self.micro = MicrostructureAgents()
+        self.private_alpha = PrivateDataAlphaAgents()
+        self.learning = AdaptiveLearningLayer(
+            decay=float(self.cfg.get("learning", {}).get("decay", 0.95)),
+            min_weight=float(self.cfg.get("learning", {}).get("min_weight", 0.05)),
+        )
+        self.research_council = LLMResearchCouncil(
+            enable=bool(self.cfg.get("research_council", {}).get("enabled", False)),
+            ollama_model=acfg.get("ollama_model", "llama3.1:8b"),
+            ollama_url=acfg.get("ollama_url", "http://localhost:11434/api/generate"),
+        )
         self.regime_agent = MacroRegimeAgent()
         self.data_quality = DataQualityAgent(
             max_nan_ratio=float(dqcfg.get("max_nan_ratio", 0.01)),
@@ -140,19 +163,7 @@ class CentralizedHedgeFundSystem:
         return sha256_hex(snapshot)[:16]
 
     def _execution_broker(self):
-        ecfg = self.cfg.get("execution", {})
-        broker_name = ecfg.get("broker", "stub")
-        if broker_name == "alpaca_paper":
-            return AlpacaPaperBroker(
-                base_url=ecfg.get("alpaca_base_url", "https://paper-api.alpaca.markets"),
-                min_order_notional=float(ecfg.get("min_order_notional", 10.0)),
-                order_style=str(ecfg.get("order_style", "twap")),
-                twap_slices=int(ecfg.get("twap_slices", 3)),
-                max_participation_adv=float(ecfg.get("max_participation_adv", 0.10)),
-                adv_notional_default=float(ecfg.get("adv_notional_default", 2_000_000.0)),
-                market_mode=str(ecfg.get("market_mode", "us")),
-            )
-        return PaperBrokerStub()
+        return build_broker_router(self.cfg)
 
     def run_cycle(self, execute: bool = False) -> DecisionCycle:
         pcfg = self.cfg["portfolio"]
@@ -221,6 +232,38 @@ class CentralizedHedgeFundSystem:
             run_id,
             {name: score.round(6).to_dict() for name, score in strategy_scores.items()},
         )
+
+        alpha_scores = self._stage_call(
+            "alpha_pipeline",
+            run_id,
+            lambda: self.alpha_pipeline.run(window),
+            lambda: {"alpha_pipeline_degraded": pd.Series(0.0, index=symbols)},
+        )
+        self.audit.append(
+            "alpha_pipeline_scores",
+            run_id,
+            {name: score.round(6).to_dict() for name, score in alpha_scores.items()},
+        )
+
+        arb_scores = self._stage_call(
+            "arbitrage",
+            run_id,
+            lambda: self.arbitrage.run(window),
+            lambda: {"arbitrage_degraded": pd.Series(0.0, index=symbols)},
+        )
+        self.audit.append(
+            "arbitrage_scores",
+            run_id,
+            {name: score.round(6).to_dict() for name, score in arb_scores.items()},
+        )
+
+        private_scores = self.private_alpha.run(symbols)
+        council_scores, council_details = self.research_council.run(symbols)
+        self.audit.append(
+            "research_council",
+            run_id,
+            {"scores": council_scores.round(6).to_dict(), "details": council_details},
+        )
         disagreement = self._disagreement(strategy_scores)
         self.audit.append("strategy_disagreement", run_id, {"value": disagreement})
         dis_threshold = float(self.cfg.get("alerts", {}).get("thresholds", {}).get("strategy_disagreement", 0.7))
@@ -245,6 +288,41 @@ class CentralizedHedgeFundSystem:
         )
 
         combined = self.strategy.weighted_score(strategy_scores) * regime_snapshot.risk_multiplier
+
+        alpha_weight = float(self.cfg.get("alpha_pipeline", {}).get("blend_weight", 0.15))
+        arb_weight = float(self.cfg.get("arbitrage", {}).get("blend_weight", 0.10))
+        council_weight = float(self.cfg.get("research_council", {}).get("blend_weight", 0.10))
+        private_weight = float(self.cfg.get("private_alpha", {}).get("blend_weight", 0.05))
+
+        if alpha_scores:
+            alpha_combined = pd.concat(alpha_scores.values(), axis=1).mean(axis=1).reindex(symbols).fillna(0.0)
+            combined = combined + alpha_weight * alpha_combined
+        if arb_scores:
+            arb_combined = pd.concat(arb_scores.values(), axis=1).mean(axis=1).reindex(symbols).fillna(0.0)
+            combined = combined + arb_weight * arb_combined
+        if private_scores:
+            p_combined = pd.concat(private_scores.values(), axis=1).mean(axis=1).reindex(symbols).fillna(0.0)
+            combined = combined + private_weight * p_combined
+        combined = combined + council_weight * council_scores.reindex(symbols).fillna(0.0)
+
+        # Optional adaptive update for strategy blend.
+        if bool(self.cfg.get("learning", {}).get("enabled", False)):
+            recent_perf = {k: float(v.tail(5).mean().mean()) for k, v in strategy_scores.items()}
+            self.strategy.strategy_weights = self.learning.update_weights(
+                self.strategy.strategy_weights,
+                recent_perf,
+            )
+            self.audit.append("adaptive_learning_update", run_id, {"weights": self.strategy.strategy_weights})
+
+        micro = self.micro.order_book_agent(symbols) + self.micro.tape_reading(symbols) + self.micro.latency_arb(symbols)
+        if self.micro.flash_crash_detector(window):
+            combined = combined * 0.0
+            self.audit.append("flash_crash_detector", run_id, {"triggered": True})
+        else:
+            combined = combined + float(self.cfg.get("microstructure", {}).get("blend_weight", 0.05)) * micro
+
+        macro_snapshot = self.macro_intel.snapshot()
+        self.audit.append("macro_intelligence", run_id, macro_snapshot)
         pre_risk = self.fund_manager.run(combined)
         regime = regime_snapshot.regime
         final_weights, risk_flags = self._stage_call(
@@ -280,11 +358,8 @@ class CentralizedHedgeFundSystem:
         if execute:
             broker = self._execution_broker()
             latest_prices = prices.iloc[-1]
-            if isinstance(broker, AlpacaPaperBroker):
-                broker.submit_target_weights(final_weights, latest_prices, run_id=run_id)
-            else:
-                broker.submit_target_weights(final_weights, run_id=run_id)
-            self.audit.append("execution_submitted", run_id, {"broker": type(broker).__name__})
+            broker_used = broker.submit_target_weights(final_weights, latest_prices, run_id=run_id)
+            self.audit.append("execution_submitted", run_id, {"broker": broker_used})
             self.health.beat(run_id, "execution_submitted")
         else:
             self.health.beat(run_id, "decision_only")
