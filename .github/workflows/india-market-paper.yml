@@ -32,4 +32,4 @@ jobs:
           APCA_API_SECRET_KEY: ${{ secrets.APCA_API_SECRET_KEY }}
           APCA_PAPER_BASE_URL: ${{ secrets.APCA_PAPER_BASE_URL }}
         run: |
-          python scripts/run_if_india_market_open.py
+          python scripts/run_if_india_market_open.py --command "python scripts/run_daily.py --config configs/default.yaml"
