@@ -1,0 +1,16 @@
+[Unit]
+Description=AI Native Hedge Fund Live Paper Trading Service
+Wants=network-online.target docker.service
+After=network-online.target docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/opt/ai-native-hedge-fund
+ExecStart=/usr/bin/docker compose -f docker-compose.oracle.yml up -d --build
+ExecStop=/usr/bin/docker compose -f docker-compose.oracle.yml down
+ExecReload=/usr/bin/docker compose -f docker-compose.oracle.yml up -d --build
+TimeoutStartSec=0
+
+[Install]
+WantedBy=multi-user.target

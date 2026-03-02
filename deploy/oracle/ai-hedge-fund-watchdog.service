@@ -1,0 +1,12 @@
+[Unit]
+Description=AI Hedge Fund Heartbeat Watchdog
+After=ai-hedge-fund.service
+Wants=ai-hedge-fund.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/ai-native-hedge-fund
+Environment=PROJECT_DIR=/opt/ai-native-hedge-fund
+Environment=MAX_AGE_SEC=900
+ExecStart=/bin/bash /opt/ai-native-hedge-fund/deploy/oracle/check_heartbeat.sh
+ExecStartPost=/bin/bash -lc '/bin/bash /opt/ai-native-hedge-fund/deploy/oracle/check_heartbeat.sh || (echo "Restarting ai-hedge-fund.service due to stale heartbeat"; /bin/systemctl restart ai-hedge-fund.service)'

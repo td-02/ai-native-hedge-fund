@@ -106,6 +106,17 @@ Shows:
 docker compose up --build
 ```
 
+## Oracle Always Free (24/7)
+Use the Oracle deployment bundle:
+- `deploy/oracle/README.md`
+- `deploy/oracle/install.sh`
+
+Quick start on VM:
+```bash
+chmod +x deploy/oracle/install.sh
+./deploy/oracle/install.sh
+```
+
 ## Notes
 - Free/open-source only. No paid API required.
 - Keep `execution.broker: stub` during testing.

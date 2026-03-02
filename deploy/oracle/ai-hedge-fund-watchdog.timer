@@ -1,0 +1,11 @@
+[Unit]
+Description=Run AI Hedge Fund Watchdog every 5 minutes
+
+[Timer]
+OnBootSec=4min
+OnUnitActiveSec=5min
+Unit=ai-hedge-fund-watchdog.service
+Persistent=true
+
+[Install]
+WantedBy=timers.target
