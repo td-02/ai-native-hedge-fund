@@ -131,6 +131,26 @@ python scripts/live.py --config configs/live_stub.yaml --poll-seconds 300 --max-
 
 Note: free platforms may sleep/pause workloads, so this is not guaranteed 24/7.
 
+## Fully Free Option: GitHub Actions (India Market Hours Only)
+For your requirement (run only while market is open), use:
+- `.github/workflows/india-market-paper.yml`
+- `scripts/run_if_india_market_open.py`
+- `configs/market/nse_holidays.txt`
+
+This runs every 15 minutes on weekdays, then checks IST market window (09:15-15:30) and holiday list before executing a cycle.
+
+Default command in workflow:
+```bash
+python scripts/run_daily.py --config configs/live_stub.yaml
+```
+
+To use real Alpaca paper execution in Actions:
+1. Set `execution` to Alpaca config.
+2. Add GitHub Actions secrets:
+   - `APCA_API_KEY_ID`
+   - `APCA_API_SECRET_KEY`
+   - `APCA_PAPER_BASE_URL` (optional)
+
 ## Notes
 - Free/open-source only. No paid API required.
 - Keep `execution.broker: stub` during testing.

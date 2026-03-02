@@ -1,0 +1,4 @@
+# Add NSE holiday dates in YYYY-MM-DD format (IST).
+# Example:
+# 2026-01-26
+# 2026-03-06

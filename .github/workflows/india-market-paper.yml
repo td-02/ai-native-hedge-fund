@@ -1,0 +1,35 @@
+name: India Market Paper Trading
+
+on:
+  workflow_dispatch:
+  schedule:
+    # 09:15, 09:30, 09:45 IST (03:45, 04:00, 04:15 UTC etc)
+    - cron: "45 3 * * 1-5"
+    - cron: "*/15 4-9 * * 1-5"
+    - cron: "0,15,30 10 * * 1-5"
+
+jobs:
+  paper-trading-cycle:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run only in India market window
+        env:
+          APCA_API_KEY_ID: ${{ secrets.APCA_API_KEY_ID }}
+          APCA_API_SECRET_KEY: ${{ secrets.APCA_API_SECRET_KEY }}
+          APCA_PAPER_BASE_URL: ${{ secrets.APCA_PAPER_BASE_URL }}
+        run: |
+          python scripts/run_if_india_market_open.py
