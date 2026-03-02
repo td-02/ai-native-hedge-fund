@@ -1,0 +1,7 @@
+{
+  "$schema": "https://railway.app/railway.schema.json",
+  "deploy": {
+    "startCommand": "python scripts/live.py --config configs/live_stub.yaml --poll-seconds 300 --max-cycles 0",
+    "restartPolicyType": "always"
+  }
+}

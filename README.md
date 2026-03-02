@@ -117,6 +117,20 @@ chmod +x deploy/oracle/install.sh
 ./deploy/oracle/install.sh
 ```
 
+## No-VM Free Hosting
+Preconfigured files included:
+- `render.yaml`
+- `railway.json`
+- `Procfile`
+- `deploy/free-hosting.md`
+
+Default command on free hosts:
+```bash
+python scripts/live.py --config configs/live_stub.yaml --poll-seconds 300 --max-cycles 0
+```
+
+Note: free platforms may sleep/pause workloads, so this is not guaranteed 24/7.
+
 ## Notes
 - Free/open-source only. No paid API required.
 - Keep `execution.broker: stub` during testing.

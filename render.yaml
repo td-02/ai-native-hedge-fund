@@ -1,0 +1,10 @@
+services:
+  - type: worker
+    name: ai-native-hedge-fund-worker
+    env: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: python scripts/live.py --config configs/live_stub.yaml --poll-seconds 300 --max-cycles 0
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
