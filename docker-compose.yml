@@ -1,0 +1,11 @@
+version: "3.9"
+services:
+  hedge-fund:
+    build: .
+    container_name: ai-native-hedge-fund
+    env_file:
+      - .env
+    volumes:
+      - ./outputs:/app/outputs
+      - ./configs:/app/configs
+    command: ["python", "scripts/run_realtime.py", "--config", "configs/default.yaml", "--poll-seconds", "300", "--max-cycles", "0"]

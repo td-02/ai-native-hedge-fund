@@ -6,3 +6,5 @@ PyYAML
 requests
 streamlit
 plotly
+langchain
+feedparser

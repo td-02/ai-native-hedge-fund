@@ -10,7 +10,7 @@ import requests
 class PaperBrokerStub:
     """Free local stub."""
 
-    def submit_target_weights(self, weights: pd.Series) -> None:
+    def submit_target_weights(self, weights: pd.Series, latest_prices: pd.Series | None = None) -> None:
         printable = {k: round(float(v), 4) for k, v in weights.items() if abs(v) > 1e-6}
         print('Paper order targets:', printable)
 

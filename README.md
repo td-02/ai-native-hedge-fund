@@ -1,21 +1,23 @@
-# AI-Native Hedge Fund Prototype (100% Free)
+# AI-Native Hedge Fund Prototype (Free + Portable)
 
-A zero-paid, local-first side project scaffold for multi-agent portfolio simulation.
+Centralized multi-agent trading system with deterministic risk/execution logic, LangChain-enabled research, and audit-ready event logs.
 
-## What this includes
-- Free market data via `yfinance`
-- Local optional LLM routing through Ollama (`http://localhost:11434`)
-- 3-agent flow: signal -> risk -> allocator
-- Daily backtest with costs/slippage
-- Streamlit dashboard for equity + weights + metrics
-- Paper-trading stub file for Alpaca paper extension
+## Architecture
+Data ingest -> Research Agent -> Strategy Ensemble -> Fund Manager -> Risk Manager -> Execution -> Audit Ledger
 
-## Project layout
-- `free_fund/` core logic
-- `scripts/run_backtest.py` run and save backtest results
-- `app/streamlit_app.py` dashboard
-- `configs/default.yaml` settings
-- `outputs/` generated CSV results
+## Agents
+- Market/Data: pulls OHLCV from yfinance.
+- Research Agent: RSS headline analysis (deterministic), optional LangChain + local Ollama overlay.
+- Strategy Agents: trend, mean reversion, volatility carry, regime switching, event-driven.
+- Fund Manager: combines strategy scores into target weights.
+- Risk Manager: hard clamps, volatility scaling, drawdown brake.
+- Execution Agent: Alpaca paper or local stub.
+- Audit Agent: hash-linked event log for reproducibility.
+
+## Determinism and Auditability
+- Strict structured outputs and fixed strategy blend weights.
+- Hash-chained immutable JSONL audit log: `outputs/audit/events.jsonl`.
+- Latest decision snapshot: `outputs/last_decision.json`.
 
 ## Setup
 ```bash
@@ -24,49 +26,62 @@ python -m venv .venv
 pip install -r requirements.txt
 ```
 
-## Optional local LLM (free)
+## Environment
+Create `.env` from template and set keys for Alpaca paper execution:
 ```bash
-ollama pull llama3.1:8b
-ollama serve
+copy .env.example .env
 ```
 
-## Run backtest
+Required for live paper execution:
+- `APCA_API_KEY_ID`
+- `APCA_API_SECRET_KEY`
+
+Optional:
+- `APCA_PAPER_BASE_URL` (defaults to `https://paper-api.alpaca.markets`)
+
+## Run Single Decision Cycle
+Dry run (no orders):
+```bash
+python scripts/run_daily.py --dry-run
+```
+
+Paper execution:
+```bash
+python scripts/run_daily.py
+```
+
+## Run Realtime Loop
+Dry loop:
+```bash
+python scripts/run_realtime.py --poll-seconds 300 --max-cycles 0
+```
+
+Paper execution loop:
+```bash
+python scripts/run_realtime.py --execute --poll-seconds 300 --max-cycles 0
+```
+
+## Backtest
 ```bash
 python scripts/run_backtest.py --config configs/default.yaml
 ```
 
-## Launch dashboard
+## Dashboard
 ```bash
 streamlit run app/streamlit_app.py
 ```
 
-## Run daily paper rebalance
-Default is local stub (prints target weights):
-```bash
-python scripts/run_daily.py
-```
+Shows:
+- Backtest metrics/equity.
+- Latest live decision.
+- Audit event tail.
 
-Use Alpaca free paper account:
-1. Create `.env` from example and fill keys:
+## Portable Deployment (Docker)
 ```bash
-copy .env.example .env
-```
-2. Or set credentials in your shell:
-```bash
-set APCA_API_KEY_ID=your_key
-set APCA_API_SECRET_KEY=your_secret
-```
-3. In `configs/default.yaml`, set:
-```yaml
-execution:
-  broker: alpaca_paper
-```
-4. Run:
-```bash
-python scripts/run_daily.py
+docker compose up --build
 ```
 
 ## Notes
-- Default strategy is fully free and works without any paid API.
-- If Ollama is unavailable, the system auto-falls back to deterministic signals.
-- This is for research/paper trading only.
+- Free/open-source only. No paid API required.
+- Keep `execution.broker: stub` during testing.
+- For LLM research, set `agent.enable_llm_research: true` and run local Ollama.

@@ -6,3 +6,5 @@ logs/*
 .env
 
 outputs/.yfinance_cache/
+outputs/last_decision.json
+outputs/audit/*.jsonl
