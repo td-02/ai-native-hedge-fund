@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import date, datetime, timezone
+import hashlib
 import os
 import pandas as pd
 import requests
@@ -10,7 +12,12 @@ import requests
 class PaperBrokerStub:
     """Free local stub."""
 
-    def submit_target_weights(self, weights: pd.Series, latest_prices: pd.Series | None = None) -> None:
+    def submit_target_weights(
+        self,
+        weights: pd.Series,
+        latest_prices: pd.Series | None = None,
+        run_id: str | None = None,
+    ) -> None:
         printable = {k: round(float(v), 4) for k, v in weights.items() if abs(v) > 1e-6}
         print('Paper order targets:', printable)
 
@@ -22,6 +29,11 @@ class AlpacaPaperBroker:
     base_url: str = 'https://paper-api.alpaca.markets'
     min_order_notional: float = 10.0
     timeout_sec: int = 20
+    order_style: str = "twap"
+    twap_slices: int = 3
+    max_participation_adv: float = 0.10
+    adv_notional_default: float = 2_000_000.0
+    market_mode: str = "us"
 
     def __post_init__(self) -> None:
         self.api_key = os.getenv('APCA_API_KEY_ID')
@@ -71,22 +83,71 @@ class AlpacaPaperBroker:
         self._request('DELETE', f'/v2/positions/{symbol}')
         print(f'Closed position: {symbol}')
 
-    def _submit_market_order(self, symbol: str, qty: float, side: str) -> None:
+    def _submit_market_order(self, symbol: str, qty: float, side: str, client_order_id: str) -> None:
         payload = {
             'symbol': symbol,
             'qty': f'{qty:.6f}',
             'side': side,
             'type': 'market',
             'time_in_force': 'day',
+            'client_order_id': client_order_id[:48],
         }
         self._request('POST', '/v2/orders', json_payload=payload)
-        print(f'Submitted {side}: {symbol} qty={qty:.6f}')
+        print(f'Submitted {side}: {symbol} qty={qty:.6f} id={client_order_id[:16]}')
 
-    def submit_target_weights(self, weights: pd.Series, latest_prices: pd.Series) -> None:
+    @staticmethod
+    def _is_us_holiday(today: date) -> bool:
+        # Minimal holiday gate for safety; can be replaced with exchange calendars.
+        fixed = {(1, 1), (7, 4), (12, 25)}
+        return (today.month, today.day) in fixed
+
+    @staticmethod
+    def _market_is_session_open(market_mode: str) -> bool:
+        now = datetime.now(timezone.utc)
+        weekday = now.weekday()
+        if weekday >= 5:
+            return False
+        if market_mode == "india":
+            # NSE approx 09:15-15:30 IST => 03:45-10:00 UTC.
+            return (now.hour, now.minute) >= (3, 45) and (now.hour, now.minute) <= (10, 0)
+        # US regular approx 09:30-16:00 ET. Rough UTC window without DST handling: 14:30-21:00.
+        return (now.hour, now.minute) >= (14, 30) and (now.hour, now.minute) <= (21, 0)
+
+    @staticmethod
+    def _client_order_id(run_id: str, symbol: str, side: str, slice_idx: int) -> str:
+        raw = f"{run_id}:{symbol}:{side}:{slice_idx}"
+        return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+    def _slice_qty(self, total_qty: float) -> list[float]:
+        n = max(1, int(self.twap_slices))
+        base = total_qty / n
+        out = [base] * n
+        out[-1] = total_qty - sum(out[:-1])
+        return [abs(q) for q in out if abs(q) > 1e-9]
+
+    def _impact_allowed(self, delta_notional: float) -> bool:
+        return delta_notional <= (self.max_participation_adv * self.adv_notional_default)
+
+    def submit_target_weights(
+        self,
+        weights: pd.Series,
+        latest_prices: pd.Series,
+        run_id: str | None = None,
+    ) -> None:
         weights = weights.fillna(0.0).astype(float)
         latest_prices = latest_prices.reindex(weights.index).astype(float)
         latest_prices = latest_prices[latest_prices > 0]
         weights = weights.reindex(latest_prices.index).fillna(0.0)
+        run_id = run_id or datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
+
+        if self.market_mode == "us":
+            today = datetime.now(timezone.utc).date()
+            if self._is_us_holiday(today):
+                print("Execution skipped: US holiday gate active.")
+                return
+        if not self._market_is_session_open(self.market_mode):
+            print("Execution skipped: market session is closed.")
+            return
 
         equity = self._account_equity()
         current_positions = self._positions()
@@ -105,6 +166,13 @@ class AlpacaPaperBroker:
             delta_notional = abs(delta_qty) * px
             if delta_notional < self.min_order_notional:
                 continue
+            if not self._impact_allowed(delta_notional):
+                print(f"Skipped {symbol}: impact/ADV threshold exceeded.")
+                continue
+            if self.market_mode == "india" and delta_qty < 0:
+                # Conservative compliance mode for India.
+                print(f"Skipped {symbol}: short sell blocked in india compliance mode.")
+                continue
             deltas.append((symbol, delta_qty, delta_notional))
 
         # Execute sells before buys to reduce risk of buying-power rejections.
@@ -116,4 +184,11 @@ class AlpacaPaperBroker:
 
         for symbol, delta_qty, _ in ordered:
             side = 'buy' if delta_qty > 0 else 'sell'
-            self._submit_market_order(symbol=symbol, qty=abs(delta_qty), side=side)
+            qty_total = abs(delta_qty)
+            if self.order_style in {"twap", "vwap"} and qty_total > 0:
+                for i, qty_slice in enumerate(self._slice_qty(qty_total)):
+                    oid = self._client_order_id(run_id, symbol, side, i)
+                    self._submit_market_order(symbol=symbol, qty=qty_slice, side=side, client_order_id=oid)
+            else:
+                oid = self._client_order_id(run_id, symbol, side, 0)
+                self._submit_market_order(symbol=symbol, qty=qty_total, side=side, client_order_id=oid)

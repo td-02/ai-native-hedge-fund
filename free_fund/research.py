@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any
 
 import feedparser
 import requests
 
 from .contracts import ResearchSignal
+from .resilience import with_retries
 
 
 @dataclass
@@ -16,14 +18,51 @@ class ResearchAgent:
     ollama_model: str = "llama3.1:8b"
     ollama_url: str = "http://localhost:11434/api/generate"
     max_headlines: int = 8
+    max_news_age_minutes: int = 15
+    max_retries: int = 2
+    retry_base_delay_sec: float = 0.4
 
     def _fetch_headlines(self, symbol: str) -> list[dict[str, str]]:
-        url = f"https://feeds.finance.yahoo.com/rss/2.0/headline?s={symbol}&region=US&lang=en-US"
-        parsed = feedparser.parse(url)
+        def _call() -> Any:
+            url = f"https://feeds.finance.yahoo.com/rss/2.0/headline?s={symbol}&region=US&lang=en-US"
+            return feedparser.parse(url)
+
+        parsed = with_retries(
+            _call,
+            max_retries=self.max_retries,
+            base_delay_sec=self.retry_base_delay_sec,
+        )
         entries: list[dict[str, str]] = []
         for item in parsed.entries[: self.max_headlines]:
-            entries.append({"title": item.get("title", ""), "url": item.get("link", "")})
+            published = item.get("published_parsed") or item.get("updated_parsed")
+            published_iso = ""
+            if published is not None:
+                published_iso = datetime(*published[:6], tzinfo=timezone.utc).isoformat()
+            entries.append(
+                {"title": item.get("title", ""), "url": item.get("link", ""), "published_utc": published_iso}
+            )
         return entries
+
+    def _is_stale(self, headlines: list[dict[str, str]]) -> bool:
+        if not headlines:
+            return True
+        valid_times: list[datetime] = []
+        for h in headlines:
+            ts = h.get("published_utc", "")
+            if not ts:
+                continue
+            try:
+                dt = datetime.fromisoformat(ts)
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+                valid_times.append(dt.astimezone(timezone.utc))
+            except Exception:
+                continue
+        if not valid_times:
+            return True
+        newest = max(valid_times)
+        age_min = (datetime.now(timezone.utc) - newest).total_seconds() / 60.0
+        return age_min > self.max_news_age_minutes
 
     @staticmethod
     def _keyword_sentiment(text: str) -> float:
@@ -50,15 +89,22 @@ class ResearchAgent:
                 return prompt.invoke(inp).to_string()
 
             def call_ollama(rendered_prompt: str) -> str:
-                payload = {
-                    "model": self.ollama_model,
-                    "prompt": rendered_prompt,
-                    "stream": False,
-                    "format": "json",
-                }
-                resp = requests.post(self.ollama_url, json=payload, timeout=20)
-                resp.raise_for_status()
-                return resp.json().get("response", "{}")
+                def _call() -> str:
+                    payload = {
+                        "model": self.ollama_model,
+                        "prompt": rendered_prompt,
+                        "stream": False,
+                        "format": "json",
+                    }
+                    resp = requests.post(self.ollama_url, json=payload, timeout=20)
+                    resp.raise_for_status()
+                    return resp.json().get("response", "{}")
+
+                return with_retries(
+                    _call,
+                    max_retries=self.max_retries,
+                    base_delay_sec=self.retry_base_delay_sec,
+                )
 
             def parse_json(raw: str) -> dict[str, Any]:
                 parsed = json.loads(raw)
@@ -84,6 +130,7 @@ class ResearchAgent:
         results: dict[str, ResearchSignal] = {}
         for symbol in symbols:
             headlines = self._fetch_headlines(symbol)
+            is_stale = self._is_stale(headlines)
             joined = " ".join(h["title"] for h in headlines)
             det_sentiment = self._keyword_sentiment(joined)
             source_urls = [h["url"] for h in headlines if h["url"]]
@@ -92,7 +139,11 @@ class ResearchAgent:
             sentiment = det_sentiment
             confidence = 0.45 if headlines else 0.2
 
-            if self.enable_llm and headlines:
+            if is_stale:
+                summary = "Research skipped due to stale news feed."
+                sentiment = 0.0
+                confidence = 0.1
+            elif self.enable_llm and headlines:
                 llm = self._llm_overlay(symbol, headlines)
                 # Fixed blend keeps behavior deterministic when inputs are the same.
                 sentiment = 0.7 * det_sentiment + 0.3 * llm["sentiment"]

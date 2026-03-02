@@ -13,11 +13,20 @@ Data ingest -> Research Agent -> Strategy Ensemble -> Fund Manager -> Risk Manag
 - Risk Manager: hard clamps, volatility scaling, drawdown brake.
 - Execution Agent: Alpaca paper or local stub.
 - Audit Agent: hash-linked event log for reproducibility.
+- Resilience Layer: circuit breakers, retries/backoff, degraded mode, dead-man heartbeat.
 
 ## Determinism and Auditability
 - Strict structured outputs and fixed strategy blend weights.
 - Hash-chained immutable JSONL audit log: `outputs/audit/events.jsonl`.
 - Latest decision snapshot: `outputs/last_decision.json`.
+- Heartbeat file for dead-man switch: `outputs/heartbeat.json`.
+
+## Reliability Controls
+- Circuit breakers per stage (`research`, `strategy`, `regime`, `risk`).
+- Data quality gate (staleness, NaN ratio, return outliers, invalid prices).
+- Risk extensions: VaR/ES, concentration caps, beta-neutrality band, jump-risk brake, regime leverage.
+- Alerts: Slack webhook option for stage failures, disagreement spikes, PnL drift, dead-man triggers.
+- Execution guards: TWAP slicing, ADV impact cap, holiday/session checks, market-mode compliance guard.
 
 ## Setup
 ```bash
@@ -66,6 +75,11 @@ python scripts/run_realtime.py --execute --poll-seconds 300 --max-cycles 0
 python scripts/run_backtest.py --config configs/default.yaml
 ```
 
+## Health Check
+```bash
+python scripts/healthcheck.py
+```
+
 ## Dashboard
 ```bash
 streamlit run app/streamlit_app.py
@@ -85,3 +99,8 @@ docker compose up --build
 - Free/open-source only. No paid API required.
 - Keep `execution.broker: stub` during testing.
 - For LLM research, set `agent.enable_llm_research: true` and run local Ollama.
+
+## Tests
+```bash
+pytest -q
+```

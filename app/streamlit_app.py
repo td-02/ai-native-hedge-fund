@@ -15,6 +15,7 @@ equity_path = out / 'equity_curve.csv'
 weights_path = out / 'weights.csv'
 decision_path = out / 'last_decision.json'
 audit_path = out / 'audit' / 'events.jsonl'
+heartbeat_path = out / 'heartbeat.json'
 
 if metrics_path.exists() and equity_path.exists() and weights_path.exists():
     metrics = pd.read_csv(metrics_path)
@@ -43,6 +44,10 @@ if decision_path.exists():
     st.json(decision)
 else:
     st.info('No live decision yet. Run: python scripts/run_daily.py --dry-run')
+
+if heartbeat_path.exists():
+    st.subheader("Heartbeat")
+    st.json(json.loads(heartbeat_path.read_text(encoding="utf-8")))
 
 if audit_path.exists():
     st.subheader('Audit Trail (Tail)')

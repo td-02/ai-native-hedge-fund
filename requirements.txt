@@ -8,3 +8,4 @@ streamlit
 plotly
 langchain
 feedparser
+pytest

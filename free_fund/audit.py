@@ -45,3 +45,28 @@ class AuditLedger:
             f.write(json.dumps(event, sort_keys=True))
             f.write("\n")
         return event_hash
+
+    def verify_tail(self, last_n: int = 20) -> bool:
+        if not self.event_log_path.exists():
+            return True
+        lines = self.event_log_path.read_text(encoding="utf-8").splitlines()
+        if not lines:
+            return True
+        subset = lines[-last_n:]
+        prev = None
+        for raw in subset:
+            obj = json.loads(raw)
+            body = {
+                "event_type": obj["event_type"],
+                "run_id": obj["run_id"],
+                "timestamp_utc": obj["timestamp_utc"],
+                "payload": obj["payload"],
+                "prev_hash": obj["prev_hash"],
+            }
+            expected = sha256_hex(body)
+            if expected != obj.get("event_hash"):
+                return False
+            if prev is not None and obj.get("prev_hash") != prev:
+                return False
+            prev = obj.get("event_hash")
+        return True

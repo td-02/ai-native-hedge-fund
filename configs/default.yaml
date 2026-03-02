@@ -24,6 +24,9 @@ agent:
   ollama_model: llama3.1:8b
   ollama_url: http://localhost:11434/api/generate
   max_headlines: 8
+  max_news_age_minutes: 15
+  max_retries: 2
+  retry_base_delay_sec: 0.4
 
 strategies:
   weights:
@@ -40,8 +43,45 @@ risk_hard_limits:
   max_annual_vol: 0.20
   drawdown_brake: 0.15
   brake_scale: 0.50
+  var_limit_95: 0.03
+  es_limit_95: 0.04
+  concentration_top1_limit: 0.30
+  concentration_top5_limit: 0.80
+  beta_neutral_band: 0.20
+  jump_threshold: 0.06
+  max_leverage_by_regime:
+    trend: 3.0
+    meanrev: 2.5
+    volatility_carry: 8.0
+    stress: 1.0
+
+data_quality:
+  max_nan_ratio: 0.01
+  max_abs_daily_return: 0.30
+  max_zero_price_ratio: 0.0
+  max_staleness_minutes: 15
+
+resilience:
+  failure_threshold: 3
+  recovery_timeout_sec: 120
+  degraded_mode_enabled: true
+
+health:
+  deadman_timeout_sec: 900
+
+alerts:
+  enabled: false
+  slack_webhook: ''
+  thresholds:
+    daily_pnl_drift: 0.03
+    strategy_disagreement: 0.70
 
 execution:
   broker: alpaca_paper
   alpaca_base_url: https://paper-api.alpaca.markets
   min_order_notional: 10
+  order_style: twap
+  twap_slices: 3
+  max_participation_adv: 0.10
+  adv_notional_default: 2000000
+  market_mode: us

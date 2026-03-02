@@ -102,8 +102,31 @@ class RiskManagerAgent:
     max_annual_vol: float
     drawdown_brake: float
     brake_scale: float
+    var_limit_95: float = 0.03
+    es_limit_95: float = 0.04
+    concentration_top1_limit: float = 0.30
+    concentration_top5_limit: float = 0.80
+    beta_neutral_band: float = 0.20
+    jump_threshold: float = 0.06
+    max_leverage_by_regime: dict[str, float] | None = None
 
-    def run(self, candidate_weights: pd.Series, window: pd.DataFrame) -> tuple[pd.Series, list[str]]:
+    def _calc_beta(self, portfolio_returns: pd.Series, benchmark_returns: pd.Series) -> float:
+        aligned = pd.concat([portfolio_returns, benchmark_returns], axis=1).dropna()
+        if len(aligned) < 20:
+            return 0.0
+        cov = float(np.cov(aligned.iloc[:, 0], aligned.iloc[:, 1], ddof=0)[0, 1])
+        var_b = float(np.var(aligned.iloc[:, 1], ddof=0))
+        if var_b <= 1e-12:
+            return 0.0
+        return cov / var_b
+
+    def run(
+        self,
+        candidate_weights: pd.Series,
+        window: pd.DataFrame,
+        regime: str = "trend",
+        benchmark_symbol: str | None = None,
+    ) -> tuple[pd.Series, list[str]]:
         flags: list[str] = []
         weights = candidate_weights.clip(-self.max_weight, self.max_weight).copy()
 
@@ -118,6 +141,23 @@ class RiskManagerAgent:
             weights = weights / gross * self.gross_limit
             flags.append("gross_exposure_scaled")
 
+        # Regime-aware leverage cap.
+        if self.max_leverage_by_regime:
+            regime_cap = float(self.max_leverage_by_regime.get(regime, self.gross_limit))
+            gross_now = float(weights.abs().sum())
+            if gross_now > regime_cap and gross_now > 1e-12:
+                weights = weights / gross_now * regime_cap
+                flags.append("regime_leverage_scaled")
+
+        # Concentration checks.
+        sorted_abs = weights.abs().sort_values(ascending=False)
+        if len(sorted_abs) > 0 and float(sorted_abs.iloc[0]) > self.concentration_top1_limit:
+            weights = weights * (self.concentration_top1_limit / float(sorted_abs.iloc[0]))
+            flags.append("concentration_top1_scaled")
+        if len(sorted_abs) >= 5 and float(sorted_abs.iloc[:5].sum()) > self.concentration_top5_limit:
+            weights = weights * (self.concentration_top5_limit / float(sorted_abs.iloc[:5].sum()))
+            flags.append("concentration_top5_scaled")
+
         asset_returns = window.pct_change().dropna()
         if len(asset_returns) > 30:
             portfolio_returns = (asset_returns * weights).sum(axis=1)
@@ -126,10 +166,35 @@ class RiskManagerAgent:
                 weights = weights * (self.max_annual_vol / annual_vol)
                 flags.append("vol_target_scaled")
 
+            # Historical VaR/ES 95%.
+            var95 = float(np.quantile(portfolio_returns, 0.05))
+            es95 = float(portfolio_returns[portfolio_returns <= var95].mean()) if (portfolio_returns <= var95).any() else var95
+            if abs(var95) > self.var_limit_95 and abs(var95) > 1e-12:
+                scale = self.var_limit_95 / abs(var95)
+                weights = weights * scale
+                flags.append("var95_scaled")
+            if abs(es95) > self.es_limit_95 and abs(es95) > 1e-12:
+                scale = self.es_limit_95 / abs(es95)
+                weights = weights * scale
+                flags.append("es95_scaled")
+
             equity = (1 + portfolio_returns).cumprod()
             drawdown = float((equity / equity.cummax() - 1).min())
             if drawdown < -abs(self.drawdown_brake):
                 weights = weights * self.brake_scale
                 flags.append("drawdown_brake_active")
+
+            # Tail risk jump detection.
+            if float(portfolio_returns.abs().max()) > self.jump_threshold:
+                weights = weights * self.brake_scale
+                flags.append("tail_jump_brake_active")
+
+            # Beta neutrality check.
+            if benchmark_symbol and benchmark_symbol in asset_returns.columns:
+                beta = self._calc_beta(portfolio_returns, asset_returns[benchmark_symbol])
+                if abs(beta) > self.beta_neutral_band and abs(beta) > 1e-12:
+                    beta_scale = self.beta_neutral_band / abs(beta)
+                    weights = weights * beta_scale
+                    flags.append("beta_neutrality_scaled")
 
         return weights.fillna(0.0), flags
