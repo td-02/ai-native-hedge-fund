@@ -26,6 +26,8 @@ Data ingest -> Research Agent -> Strategy Ensemble -> Fund Manager -> Risk Manag
 - Hash-chained immutable JSONL audit log: `outputs/audit/events.jsonl`.
 - Latest decision snapshot: `outputs/last_decision.json`.
 - Heartbeat file for dead-man switch: `outputs/heartbeat.json`.
+- TraceLM span traces (cycle + stages + execution): `outputs/traces/trace_<trace_id>.json`
+- TraceLM sqlite trace DB: `tracelm_traces.db`
 
 ## Reliability Controls
 - Circuit breakers per stage (`research`, `strategy`, `regime`, `risk`).
@@ -159,4 +161,23 @@ To use real Alpaca paper execution in Actions:
 ## Tests
 ```bash
 pytest -q
+```
+
+## TraceLM (Full Traceability)
+This project uses `tracelm` for execution tracing in addition to audit logs.
+
+- Enable/disable in config:
+```yaml
+tracing:
+  enabled: true
+```
+
+- Run one cycle and generate trace:
+```bash
+python scripts/run_daily.py --config configs/live_stub.yaml --dry-run
+```
+
+- Inspect generated traces:
+```bash
+tracelm list
 ```

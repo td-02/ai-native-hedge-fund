@@ -27,6 +27,7 @@ from .research_council import LLMResearchCouncil
 from .research import ResearchAgent
 from .resilience import BreakerRegistry
 from .strategy_stack import FundManagerAgent, RiskManagerAgent, StrategyEnsembleAgent
+from .tracing import TraceLMLogger
 from .contracts import ResearchSignal
 
 T = TypeVar("T")
@@ -54,6 +55,10 @@ class CentralizedHedgeFundSystem:
         self.alerts = AlertManager(
             slack_webhook=str(alert_cfg.get("slack_webhook", "")),
             enabled=bool(alert_cfg.get("enabled", False)),
+        )
+        self.tracer = TraceLMLogger(
+            enabled=bool(self.cfg.get("tracing", {}).get("enabled", True)),
+            output_dir=self.out_dir / "traces",
         )
 
         acfg = self.cfg["agent"]
@@ -114,15 +119,36 @@ class CentralizedHedgeFundSystem:
             max_leverage_by_regime=rcfg.get("max_leverage_by_regime", {}),
         )
 
-    def _stage_call(self, stage: str, run_id: str, fn: Callable[[], T], degraded: Callable[[], T]) -> T:
+    def _stage_call(
+        self,
+        stage: str,
+        run_id: str,
+        fn: Callable[[], T],
+        degraded: Callable[[], T],
+        trace_id: str = "",
+        parent_span_id: str = "",
+    ) -> T:
+        stage_span_id = self.tracer.start_span(
+            trace_id,
+            parent_span_id,
+            name=f"stage:{stage}",
+            metadata={"run_id": run_id},
+        )
         breaker = self.breakers.get(stage)
         if not breaker.allow_call():
             payload = {"stage": stage, "state": breaker.state, "reason": "breaker_open"}
             self.audit.append("degraded_mode", run_id, payload)
-            return degraded()
+            out = degraded()
+            self.tracer.finish_span(
+                trace_id,
+                stage_span_id,
+                metadata_update={"mode": "degraded", "reason": "breaker_open"},
+            )
+            return out
         try:
             out = fn()
             breaker.on_success()
+            self.tracer.finish_span(trace_id, stage_span_id, metadata_update={"mode": "normal"})
             return out
         except Exception as exc:
             breaker.on_failure()
@@ -134,7 +160,15 @@ class CentralizedHedgeFundSystem:
             self.alerts.notify("agent_stage_error", {"stage": stage, "run_id": run_id, "error": str(exc)})
             if self.degraded_mode:
                 self.audit.append("degraded_mode", run_id, {"stage": stage, "reason": "exception"})
-                return degraded()
+                out = degraded()
+                self.tracer.finish_span(
+                    trace_id,
+                    stage_span_id,
+                    metadata_update={"mode": "degraded", "reason": "exception"},
+                    error=str(exc),
+                )
+                return out
+            self.tracer.finish_span(trace_id, stage_span_id, error=str(exc))
             raise
 
     @staticmethod
@@ -180,6 +214,14 @@ class CentralizedHedgeFundSystem:
             raise ValueError("Not enough history for multi-strategy decision.")
 
         run_id = self._make_run_id(window)
+        trace_id, root_span_id = self.tracer.start_trace(
+            name="run_cycle",
+            metadata={
+                "run_id": run_id,
+                "execute": execute,
+                "symbols": symbols,
+            },
+        )
         self.health.beat(run_id, "cycle_start")
         self.audit.append("market_snapshot", run_id, {"rows": len(window), "symbols": symbols})
 
@@ -202,6 +244,11 @@ class CentralizedHedgeFundSystem:
                 encoding="utf-8",
             )
             self.alerts.notify("data_quality_failed", {"run_id": run_id, "reasons": dq.reasons})
+            self.tracer.finalize_trace(
+                trace_id,
+                root_span_id,
+                metadata_update={"status": "data_quality_failed", "reasons": dq.reasons},
+            )
             return decision
 
         research = self._stage_call(
@@ -218,6 +265,8 @@ class CentralizedHedgeFundSystem:
                 )
                 for s in symbols
             },
+            trace_id=trace_id,
+            parent_span_id=root_span_id,
         )
         self.audit.append("research_output", run_id, {k: v.to_dict() for k, v in research.items()})
 
@@ -226,6 +275,8 @@ class CentralizedHedgeFundSystem:
             run_id,
             lambda: self.strategy.run(window, research),
             lambda: {"trend_following": self.strategy._trend(window).reindex(symbols).fillna(0.0)},
+            trace_id=trace_id,
+            parent_span_id=root_span_id,
         )
         self.audit.append(
             "strategy_scores",
@@ -238,6 +289,8 @@ class CentralizedHedgeFundSystem:
             run_id,
             lambda: self.alpha_pipeline.run(window),
             lambda: {"alpha_pipeline_degraded": pd.Series(0.0, index=symbols)},
+            trace_id=trace_id,
+            parent_span_id=root_span_id,
         )
         self.audit.append(
             "alpha_pipeline_scores",
@@ -250,6 +303,8 @@ class CentralizedHedgeFundSystem:
             run_id,
             lambda: self.arbitrage.run(window),
             lambda: {"arbitrage_degraded": pd.Series(0.0, index=symbols)},
+            trace_id=trace_id,
+            parent_span_id=root_span_id,
         )
         self.audit.append(
             "arbitrage_scores",
@@ -275,6 +330,8 @@ class CentralizedHedgeFundSystem:
             run_id,
             lambda: self.regime_agent.run(prefer_india=str(self.cfg.get("execution", {}).get("market_mode", "us")) == "india"),
             lambda: RegimeSnapshot(regime="trend", confidence=0.5, leverage_cap=1.0, risk_multiplier=1.0),
+            trace_id=trace_id,
+            parent_span_id=root_span_id,
         )
         self.audit.append(
             "regime_snapshot",
@@ -330,6 +387,8 @@ class CentralizedHedgeFundSystem:
             run_id,
             lambda: self.risk.run(pre_risk, window, regime=regime, benchmark_symbol=symbols[0]),
             lambda: (pd.Series(0.0, index=symbols), ["risk_stage_failed_safe_zero"]),
+            trace_id=trace_id,
+            parent_span_id=root_span_id,
         )
         pnl_drift = self._check_pnl_drift(window, final_weights)
         drift_threshold = float(self.cfg.get("alerts", {}).get("thresholds", {}).get("daily_pnl_drift", 0.03))
@@ -356,17 +415,36 @@ class CentralizedHedgeFundSystem:
             self.alerts.notify("audit_anomaly", {"run_id": run_id})
 
         if execute:
+            exec_span_id = self.tracer.start_span(
+                trace_id,
+                root_span_id,
+                name="execution",
+                metadata={"run_id": run_id},
+            )
             broker = self._execution_broker()
             latest_prices = prices.iloc[-1]
             broker_used = broker.submit_target_weights(final_weights, latest_prices, run_id=run_id)
             self.audit.append("execution_submitted", run_id, {"broker": broker_used})
             self.health.beat(run_id, "execution_submitted")
+            self.tracer.finish_span(
+                trace_id,
+                exec_span_id,
+                metadata_update={"broker": broker_used, "orders": "submitted"},
+            )
         else:
             self.health.beat(run_id, "decision_only")
 
         (self.out_dir / "last_decision.json").write_text(
             json.dumps(decision.to_dict(), indent=2, sort_keys=True),
             encoding="utf-8",
+        )
+        self.tracer.finalize_trace(
+            trace_id,
+            root_span_id,
+            metadata_update={
+                "risk_flags": decision.risk_flags,
+                "target_weights": decision.target_weights,
+            },
         )
         return decision
 

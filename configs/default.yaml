@@ -109,6 +109,9 @@ alerts:
     daily_pnl_drift: 0.03
     strategy_disagreement: 0.70
 
+tracing:
+  enabled: true
+
 execution:
   broker: alpaca_paper
   primary_broker: alpaca_paper

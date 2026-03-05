@@ -11,3 +11,5 @@ outputs/audit/*.jsonl
 outputs/heartbeat.json
 outputs/last_decision.json
 outputs/audit/events.jsonl
+outputs/traces/
+tracelm_traces.db
