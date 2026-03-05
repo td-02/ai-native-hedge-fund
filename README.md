@@ -164,7 +164,10 @@ pytest -q
 ```
 
 ## TraceLM (Full Traceability)
-This project uses `tracelm` for execution tracing in addition to audit logs.
+This project uses **TraceLM** (`tracelm`) as the tracing layer in addition to audit logs.
+TraceLM is **my own package** for this system's execution observability and replay diagnostics.
+
+- PyPI: `https://pypi.org/project/tracelm/`
 
 - Enable/disable in config:
 ```yaml
