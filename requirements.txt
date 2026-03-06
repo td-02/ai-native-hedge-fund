@@ -10,3 +10,4 @@ langchain
 feedparser
 pytest
 tracelm
+mcp

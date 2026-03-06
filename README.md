@@ -187,3 +187,23 @@ python scripts/run_daily.py --config configs/live_stub.yaml --dry-run
 ```bash
 tracelm list
 ```
+
+## MCP Research Tools Server
+This repo now includes an MCP server so researcher agents can access additional tools over MCP:
+- `news_snapshot`
+- `price_stats`
+- `peer_compare`
+- `macro_snapshot`
+- `decision_preview`
+
+Server entrypoint:
+```bash
+python scripts/run_mcp_server.py --config configs/default.yaml --host 127.0.0.1 --port 8000 --transport streamable-http
+```
+
+For SSE transport:
+```bash
+python scripts/run_mcp_server.py --transport sse
+```
+
+This allows external MCP clients to connect and use the research tools in a standardized way.
