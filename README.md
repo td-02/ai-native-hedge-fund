@@ -13,6 +13,7 @@ Data ingest -> Research Agent -> Strategy Ensemble -> Fund Manager -> Risk Manag
 - Cross-Asset Arbitrage Agents: NSE/BSE arb hook, cash-futures basis, ETF NAV arb, ADR arb hook.
 - Macro Intelligence Agents: RBI policy hook, global carry, crude-gold correlation, rupee regime.
 - Research Council (LLM-native): researcher/news/peer/synthesis multi-agent ranking.
+  - Uses bounded tool-using loops (price snapshot + headline snapshot tools) per symbol.
 - Adaptive Learning Layer: Bayesian-style weight drift and decay updates.
 - Private Data Alpha Hooks: bulk deals, margin pressure, F&O lot changes, corp-action arb.
 - Fund Manager: combines strategy scores into target weights.
@@ -157,6 +158,8 @@ To use real Alpaca paper execution in Actions:
 - Free/open-source only. No paid API required.
 - Keep `execution.broker: stub` during testing.
 - For LLM research, set `agent.enable_llm_research: true` and run local Ollama.
+- `configs/default.yaml` is AI-heavy by default (`enable_llm_research: true`, `research_council.enabled: true`).
+- `configs/live_stub.yaml` remains safer for free hosted workers without local Ollama.
 
 ## Tests
 ```bash

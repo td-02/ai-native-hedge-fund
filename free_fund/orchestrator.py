@@ -91,6 +91,8 @@ class CentralizedHedgeFundSystem:
             enable=bool(self.cfg.get("research_council", {}).get("enabled", False)),
             ollama_model=acfg.get("ollama_model", "llama3.1:8b"),
             ollama_url=acfg.get("ollama_url", "http://localhost:11434/api/generate"),
+            max_rounds=int(self.cfg.get("research_council", {}).get("max_rounds", 2)),
+            request_timeout_sec=int(self.cfg.get("research_council", {}).get("request_timeout_sec", 8)),
         )
         self.regime_agent = MacroRegimeAgent()
         self.data_quality = DataQualityAgent(
