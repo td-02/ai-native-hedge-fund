@@ -122,6 +122,83 @@ def build_research_mcp_server(
             "symbols": decision.symbols,
         }
 
+    @mcp.tool(
+        description=(
+            "Out-of-the-box feature: run a full research sprint and return ranked opportunities "
+            "with momentum/news/volatility context and suggested action labels."
+        )
+    )
+    def research_sprint(
+        symbols: list[str],
+        period: str = "6mo",
+        max_headlines: int = 5,
+    ) -> dict[str, Any]:
+        symbols = [s.strip().upper() for s in symbols if s and s.strip()]
+        if not symbols:
+            return {"error": "empty_symbol_list"}
+
+        prices = _download_close(symbols, period=period)
+        if prices.empty:
+            return {"symbols": symbols, "error": "no_price_data"}
+
+        ranking_rows: list[dict[str, Any]] = []
+        for symbol in symbols:
+            stats = price_stats(symbol, period=period)
+            news = news_snapshot(symbol, max_items=max_headlines)
+            headlines = [i.get("title", "") for i in news.get("items", [])]
+            pos_words = ("beat", "growth", "upgrade", "strong", "profit", "record", "bullish")
+            neg_words = ("miss", "downgrade", "weak", "loss", "lawsuit", "bearish", "decline")
+            joined = " ".join(headlines).lower()
+            sentiment = sum(w in joined for w in pos_words) - sum(w in joined for w in neg_words)
+            sentiment = float(max(-3, min(3, sentiment)) / 3.0)
+
+            score = (
+                0.45 * float(stats.get("ret_20d", 0.0))
+                + 0.25 * float(stats.get("ret_5d", 0.0))
+                - 0.20 * float(stats.get("ann_vol_20d", 0.0))
+                + 0.10 * sentiment
+            )
+            action = "hold"
+            if score > 0.03:
+                action = "accumulate"
+            elif score < -0.03:
+                action = "avoid"
+
+            ranking_rows.append(
+                {
+                    "symbol": symbol,
+                    "score": score,
+                    "action": action,
+                    "ret_5d": stats.get("ret_5d", 0.0),
+                    "ret_20d": stats.get("ret_20d", 0.0),
+                    "ann_vol_20d": stats.get("ann_vol_20d", 0.0),
+                    "headline_count": news.get("count", 0),
+                    "sentiment_proxy": sentiment,
+                }
+            )
+
+        ranking_rows = sorted(ranking_rows, key=lambda r: r["score"], reverse=True)
+        for i, row in enumerate(ranking_rows, start=1):
+            row["rank"] = i
+
+        return {
+            "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+            "period": period,
+            "rows": ranking_rows,
+            "summary": "Research sprint completed with deterministic rank/action mapping.",
+        }
+
+    @mcp.prompt(name="research_committee_prompt", description="Prompt template for committee-style idea generation.")
+    def research_committee_prompt(universe: str = "SPY,QQQ,IWM,TLT,GLD") -> str:
+        return (
+            "You are the Research Committee. Use MCP tools `research_sprint`, `macro_snapshot`, and "
+            "`decision_preview` to produce:\n"
+            "1) Top 3 opportunities\n"
+            "2) Key risks\n"
+            "3) Suggested position sizing rationale\n"
+            f"Universe: {universe}"
+        )
+
     @mcp.resource("research://readme")
     def research_readme() -> str:
         path = Path("README.md")

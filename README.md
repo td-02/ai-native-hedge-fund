@@ -195,6 +195,8 @@ This repo now includes an MCP server so researcher agents can access additional 
 - `peer_compare`
 - `macro_snapshot`
 - `decision_preview`
+- `research_sprint` (ranked idea generator with action labels)
+- `research_committee_prompt` (MCP prompt template for committee workflow)
 
 Server entrypoint:
 ```bash
