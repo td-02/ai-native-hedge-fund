@@ -17,6 +17,9 @@ def _zscore(series: pd.Series) -> pd.Series:
 @dataclass
 class StrategyEnsembleAgent:
     strategy_weights: dict[str, float]
+    dynamic_min_weight: float = 0.05
+    dynamic_max_weight: float = 0.50
+    dynamic_smoothing: float = 0.30
 
     def _trend(self, window: pd.DataFrame) -> pd.Series:
         r63 = window.pct_change(63).iloc[-1]
@@ -73,6 +76,50 @@ class StrategyEnsembleAgent:
         for name, score in strategy_scores.items():
             combined = combined + float(self.strategy_weights.get(name, 0.0)) * score
         return _zscore(combined)
+
+    def estimate_strategy_quality(
+        self,
+        window: pd.DataFrame,
+        strategy_scores: dict[str, pd.Series],
+        eval_days: int = 60,
+    ) -> dict[str, float]:
+        """Estimate recent edge quality via simple next-day strategy returns."""
+        returns = window.pct_change().dropna()
+        if len(returns) < 20:
+            return {k: 0.0 for k in strategy_scores}
+        tail = returns.tail(max(20, int(eval_days)))
+        quality: dict[str, float] = {}
+        for name, score in strategy_scores.items():
+            s = score.reindex(tail.columns).fillna(0.0)
+            gross = float(s.abs().sum())
+            if gross <= 1e-12:
+                quality[name] = 0.0
+                continue
+            w = s / gross
+            strat_ret = (tail * w).sum(axis=1)
+            mu = float(strat_ret.mean())
+            sig = float(strat_ret.std(ddof=0))
+            quality[name] = mu / (sig + 1e-12)
+        return quality
+
+    def apply_dynamic_weights(self, quality_scores: dict[str, float]) -> dict[str, float]:
+        """Blend base weights toward quality-ranked weights with hard min/max caps."""
+        names = list(self.strategy_weights.keys())
+        if not names:
+            return {}
+        q = pd.Series({k: float(quality_scores.get(k, 0.0)) for k in names})
+        q = q.clip(lower=-3.0, upper=3.0)
+        # Softmax-like transform from quality to positive weights.
+        qexp = np.exp(q - float(q.max()))
+        target = pd.Series(qexp, index=names, dtype=float)
+        target = target / float(target.sum() + 1e-12)
+        # Blend with existing weights for stability.
+        cur = pd.Series({k: float(v) for k, v in self.strategy_weights.items()}, dtype=float)
+        blended = (1.0 - self.dynamic_smoothing) * cur + self.dynamic_smoothing * target
+        blended = blended.clip(lower=self.dynamic_min_weight, upper=self.dynamic_max_weight)
+        blended = blended / float(blended.sum() + 1e-12)
+        self.strategy_weights = {k: float(blended[k]) for k in names}
+        return self.strategy_weights
 
 
 @dataclass

@@ -54,6 +54,15 @@ learning:
   enabled: true
   decay: 0.95
   min_weight: 0.05
+  dynamic_min_weight: 0.05
+  dynamic_max_weight: 0.45
+  dynamic_smoothing: 0.30
+  quality_eval_days: 60
+
+execution_controls:
+  min_weight_change_to_trade: 0.02
+  max_turnover_per_cycle: 0.40
+  rebalance_cooldown_cycles: 1
 
 private_alpha:
   blend_weight: 0.05

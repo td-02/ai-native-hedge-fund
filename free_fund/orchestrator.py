@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 import json
 from pathlib import Path
 from typing import Callable, TypeVar
+import numpy as np
 import pandas as pd
 
 from .alerts import AlertManager
@@ -78,6 +79,10 @@ class CentralizedHedgeFundSystem:
             retry_base_delay_sec=float(acfg.get("retry_base_delay_sec", 0.4)),
         )
         self.strategy = StrategyEnsembleAgent(strategy_weights=scfg["weights"])
+        dyn_cfg = self.cfg.get("learning", {})
+        self.strategy.dynamic_min_weight = float(dyn_cfg.get("dynamic_min_weight", 0.05))
+        self.strategy.dynamic_max_weight = float(dyn_cfg.get("dynamic_max_weight", 0.50))
+        self.strategy.dynamic_smoothing = float(dyn_cfg.get("dynamic_smoothing", 0.30))
         self.alpha_pipeline = AlphaPipelineAgents()
         self.arbitrage = CrossAssetArbitrageAgents()
         self.macro_intel = MacroIntelligenceAgents()
@@ -120,6 +125,9 @@ class CentralizedHedgeFundSystem:
             jump_threshold=float(rcfg.get("jump_threshold", 0.06)),
             max_leverage_by_regime=rcfg.get("max_leverage_by_regime", {}),
         )
+        self._last_final_weights = pd.Series(dtype=float)
+        self._cycle_count = 0
+        self._last_rebalance_cycle = -10**9
 
     def _stage_call(
         self,
@@ -366,7 +374,12 @@ class CentralizedHedgeFundSystem:
 
         # Optional adaptive update for strategy blend.
         if bool(self.cfg.get("learning", {}).get("enabled", False)):
-            recent_perf = {k: float(v.tail(5).mean().mean()) for k, v in strategy_scores.items()}
+            recent_perf = self.strategy.estimate_strategy_quality(
+                window=window,
+                strategy_scores=strategy_scores,
+                eval_days=int(self.cfg.get("learning", {}).get("quality_eval_days", 60)),
+            )
+            self.strategy.apply_dynamic_weights(recent_perf)
             self.strategy.strategy_weights = self.learning.update_weights(
                 self.strategy.strategy_weights,
                 recent_perf,
@@ -392,6 +405,32 @@ class CentralizedHedgeFundSystem:
             trace_id=trace_id,
             parent_span_id=root_span_id,
         )
+        controls = self.cfg.get("execution_controls", {})
+        min_delta = float(controls.get("min_weight_change_to_trade", 0.02))
+        max_turnover = float(controls.get("max_turnover_per_cycle", 0.40))
+        cooldown = int(controls.get("rebalance_cooldown_cycles", 1))
+
+        prev = self._last_final_weights.reindex(symbols).fillna(0.0) if not self._last_final_weights.empty else pd.Series(0.0, index=symbols)
+        raw_delta = final_weights - prev
+        raw_turnover = float(raw_delta.abs().sum())
+        if (self._cycle_count - self._last_rebalance_cycle) <= cooldown and raw_turnover > 0:
+            final_weights = prev.copy()
+            risk_flags = risk_flags + ["rebalance_cooldown_hold"]
+        else:
+            # Ignore tiny changes to reduce noise churn.
+            delta = raw_delta.where(raw_delta.abs() >= min_delta, 0.0)
+            final_weights = prev + delta
+            turnover = float(delta.abs().sum())
+            if turnover > max_turnover and turnover > 1e-12:
+                scale = max_turnover / turnover
+                final_weights = prev + delta * scale
+                risk_flags = risk_flags + ["turnover_capped"]
+            if float(raw_delta.abs().sum()) > 0 and np.allclose(final_weights.values, prev.values):
+                risk_flags = risk_flags + ["trade_threshold_hold"]
+            self._last_rebalance_cycle = self._cycle_count
+
+        self._last_final_weights = final_weights.copy()
+        self._cycle_count += 1
         pnl_drift = self._check_pnl_drift(window, final_weights)
         drift_threshold = float(self.cfg.get("alerts", {}).get("thresholds", {}).get("daily_pnl_drift", 0.03))
         if pnl_drift > drift_threshold:

@@ -36,6 +36,72 @@ def _metrics(returns: pd.Series) -> dict[str, float]:
     }
 
 
+def run_orchestrator_backtest(
+    cfg: dict,
+    start_date: str,
+    end_date: str | None,
+    step_days: int,
+    max_cycles: int,
+) -> tuple[pd.DataFrame, pd.Series, pd.Series, pd.Series, dict[str, float]]:
+    pcfg = cfg["portfolio"]
+    prices = download_close_prices(
+        symbols=list(pcfg["symbols"]),
+        start_date=start_date,
+        end_date=end_date,
+    )
+    rets = prices.pct_change().fillna(0.0)
+
+    lookback = int(pcfg.get("lookback_days", 126))
+    step_days = max(1, int(step_days))
+    decision_rows = list(range(lookback, len(prices) - 1, step_days))
+    if max_cycles > 0:
+        decision_rows = decision_rows[: max_cycles]
+
+    if not decision_rows:
+        raise ValueError("No decision rows available. Increase date range or reduce lookback.")
+
+    weights_hist: list[pd.Series] = []
+    gross_turnover: list[float] = []
+    returns_hist: list[float] = []
+    index_hist: list[pd.Timestamp] = []
+    prev_w = pd.Series(0.0, index=prices.columns)
+
+    cfg_rt = copy.deepcopy(cfg)
+    cfg_rt.setdefault("data_quality", {})
+    cfg_rt["data_quality"]["max_staleness_minutes"] = int(60 * 24 * 365 * 20)
+    cfg_rt["portfolio"]["start_date"] = start_date
+    cfg_rt["portfolio"]["end_date"] = None
+    system = CentralizedHedgeFundSystem(cfg_rt)
+
+    for i in decision_rows:
+        dt = prices.index[i]
+        system.cfg["portfolio"]["end_date"] = dt.strftime("%Y-%m-%d")
+        decision = system.run_cycle(execute=False)
+        w = pd.Series(decision.target_weights).reindex(prices.columns).fillna(0.0)
+        turnover = float((w - prev_w).abs().sum())
+        next_ret = float((w * rets.iloc[i + 1]).sum())
+        prev_w = w
+
+        weights_hist.append(w)
+        gross_turnover.append(turnover)
+        returns_hist.append(next_ret)
+        index_hist.append(prices.index[i + 1])
+
+    wdf = pd.DataFrame(weights_hist, index=index_hist)
+    turnover_s = pd.Series(gross_turnover, index=index_hist, name="gross_turnover")
+    strat_returns = pd.Series(returns_hist, index=index_hist, name="returns")
+
+    fee = float(cfg["costs"]["transaction_cost_bps"]) / 10000.0
+    slip = float(cfg["costs"]["slippage_bps"]) / 10000.0
+    costs = turnover_s * (fee + slip)
+    net_returns = strat_returns - costs
+    equity = (1.0 + net_returns).cumprod()
+    metrics = _metrics(net_returns)
+    metrics["avg_turnover"] = float(turnover_s.mean())
+    metrics["cycles"] = float(len(index_hist))
+    return wdf, strat_returns, net_returns, equity, metrics
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", default="configs/default.yaml")
@@ -50,63 +116,15 @@ def main() -> None:
     pcfg = cfg["portfolio"]
     start_date = args.from_date or pcfg["start_date"]
     end_date = args.to_date or pcfg.get("end_date")
-
-    prices = download_close_prices(
-        symbols=list(pcfg["symbols"]),
-        start_date=start_date,
-        end_date=end_date,
-    )
-    rets = prices.pct_change().fillna(0.0)
-
-    lookback = int(pcfg.get("lookback_days", 126))
-    step_days = max(1, int(args.step_days))
-    decision_rows = list(range(lookback, len(prices) - 1, step_days))
-    if args.max_cycles > 0:
-        decision_rows = decision_rows[: args.max_cycles]
-
-    if not decision_rows:
-        raise ValueError("No decision rows available. Increase date range or reduce lookback.")
-
-    weights_hist: list[pd.Series] = []
-    gross_turnover: list[float] = []
-    returns_hist: list[float] = []
-    index_hist: list[pd.Timestamp] = []
-    prev_w = pd.Series(0.0, index=prices.columns)
-
-    for i in decision_rows:
-        dt = prices.index[i]
-        cfg_i = copy.deepcopy(cfg)
-        cfg_i.setdefault("data_quality", {})
-        cfg_i["data_quality"]["max_staleness_minutes"] = int(60 * 24 * 365 * 20)
-        cfg_i["portfolio"]["start_date"] = start_date
-        cfg_i["portfolio"]["end_date"] = dt.strftime("%Y-%m-%d")
-
-        decision = CentralizedHedgeFundSystem(cfg_i).run_cycle(execute=False)
-        w = pd.Series(decision.target_weights).reindex(prices.columns).fillna(0.0)
-        turnover = float((w - prev_w).abs().sum())
-        next_ret = float((w * rets.iloc[i + 1]).sum())
-        prev_w = w
-
-        weights_hist.append(w)
-        gross_turnover.append(turnover)
-        returns_hist.append(next_ret)
-        index_hist.append(prices.index[i + 1])
-
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
-
-    wdf = pd.DataFrame(weights_hist, index=index_hist)
-    turnover_s = pd.Series(gross_turnover, index=index_hist, name="gross_turnover")
-    strat_returns = pd.Series(returns_hist, index=index_hist, name="returns")
-
-    fee = float(cfg["costs"]["transaction_cost_bps"]) / 10000.0
-    slip = float(cfg["costs"]["slippage_bps"]) / 10000.0
-    costs = turnover_s * (fee + slip)
-    net_returns = strat_returns - costs
-    equity = (1.0 + net_returns).cumprod()
-    metrics = _metrics(net_returns)
-    metrics["avg_turnover"] = float(turnover_s.mean())
-    metrics["cycles"] = float(len(index_hist))
+    wdf, strat_returns, net_returns, equity, metrics = run_orchestrator_backtest(
+        cfg=cfg,
+        start_date=start_date,
+        end_date=end_date,
+        step_days=max(1, int(args.step_days)),
+        max_cycles=int(args.max_cycles),
+    )
 
     wdf.to_csv(out_dir / "weights.csv")
     strat_returns.to_csv(out_dir / "gross_returns.csv", header=True)
