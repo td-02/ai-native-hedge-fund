@@ -18,6 +18,8 @@ from free_fund.config import load_config
 
 
 def _metrics(returns: pd.Series) -> dict[str, float]:
+    if isinstance(returns, pd.DataFrame):
+        returns = returns.iloc[:, 0]
     returns = returns.dropna()
     if returns.empty:
         return {}
@@ -39,6 +41,8 @@ def _benchmarks(index: pd.DatetimeIndex, symbols: list[str]) -> dict[str, dict[s
     start = index.min().date().isoformat()
     end = (index.max() + pd.Timedelta(days=1)).date().isoformat()
     spy = yf.download("SPY", start=start, end=end, auto_adjust=True, progress=False)["Close"]
+    if isinstance(spy, pd.DataFrame):
+        spy = spy.iloc[:, 0]
     spy = spy.reindex(index).ffill()
     spy_ret = spy.pct_change().fillna(0.0)
 
@@ -63,10 +67,13 @@ def main() -> None:
     parser.add_argument("--to-date", default="2026-03-01")
     parser.add_argument("--step-days", type=int, default=5)
     parser.add_argument("--max-cycles", type=int, default=20)
+    parser.add_argument("--fast-mode", action="store_true", help="Use fast backtest mode (no RSS/LLM/macro API calls).")
     parser.add_argument("--out", default="outputs/ablation")
     args = parser.parse_args()
 
     base = load_config(args.config)
+    base.setdefault("backtest", {})
+    base["backtest"]["fast_mode"] = bool(args.fast_mode)
     variants: list[tuple[str, dict]] = []
 
     variants.append(("full", copy.deepcopy(base)))
@@ -110,6 +117,7 @@ def main() -> None:
             end_date=args.to_date,
             step_days=args.step_days,
             max_cycles=args.max_cycles,
+            use_prices_override=True,
         )
         if bench is None:
             bench = _benchmarks(net.index, list(cfg["portfolio"]["symbols"]))

@@ -89,6 +89,16 @@ python scripts/live.py --config configs/live_stub.yaml --poll-seconds 300 --max-
 python scripts/run_backtest.py --config configs/default.yaml
 ```
 
+Fast orchestrator backtest (cached market replay, no RSS/LLM/macro API calls):
+```bash
+python scripts/backtest_orchestrator_stack.py --config configs/backtest_fast.yaml --fast-mode --from-date 2020-01-01 --to-date 2026-03-01 --step-days 5 --max-cycles 0
+```
+
+Fast ablation:
+```bash
+python scripts/run_ablation.py --config configs/backtest_fast.yaml --fast-mode --from-date 2020-01-01 --to-date 2026-03-01 --step-days 5 --max-cycles 40
+```
+
 ## Health Check
 ```bash
 python scripts/healthcheck.py

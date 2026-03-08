@@ -209,16 +209,32 @@ class CentralizedHedgeFundSystem:
     def _execution_broker(self):
         return build_broker_router(self.cfg)
 
-    def run_cycle(self, execute: bool = False) -> DecisionCycle:
+    def _regime_from_window(self, window: pd.DataFrame) -> RegimeSnapshot:
+        returns = window.pct_change().dropna()
+        if returns.empty:
+            return RegimeSnapshot(regime="trend", confidence=0.5, leverage_cap=1.0, risk_multiplier=1.0)
+        market = returns.mean(axis=1)
+        ann_vol = float(market.std(ddof=0) * np.sqrt(252))
+        if ann_vol >= 0.30:
+            return RegimeSnapshot(regime="stress", confidence=0.8, leverage_cap=1.0, risk_multiplier=0.5)
+        if ann_vol >= 0.20:
+            return RegimeSnapshot(regime="meanrev", confidence=0.6, leverage_cap=2.5, risk_multiplier=0.8)
+        return RegimeSnapshot(regime="trend", confidence=0.7, leverage_cap=3.0, risk_multiplier=1.0)
+
+    def run_cycle(self, execute: bool = False, prices_override: pd.DataFrame | None = None) -> DecisionCycle:
         pcfg = self.cfg["portfolio"]
         symbols = list(pcfg["symbols"])
         lookback_days = int(pcfg["lookback_days"])
+        fast_backtest = bool(self.cfg.get("backtest", {}).get("fast_mode", False))
 
-        prices = download_close_prices(
-            symbols=symbols,
-            start_date=pcfg["start_date"],
-            end_date=pcfg["end_date"],
-        )
+        if prices_override is not None:
+            prices = prices_override.copy()
+        else:
+            prices = download_close_prices(
+                symbols=symbols,
+                start_date=pcfg["start_date"],
+                end_date=pcfg["end_date"],
+            )
         window = prices.tail(lookback_days)
         if len(window) < 105:
             raise ValueError("Not enough history for multi-strategy decision.")
@@ -261,23 +277,35 @@ class CentralizedHedgeFundSystem:
             )
             return decision
 
-        research = self._stage_call(
-            "research",
-            run_id,
-            lambda: self.research.run(symbols),
-            lambda: {
+        if fast_backtest:
+            research = {
                 s: ResearchSignal(
                     symbol=s,
                     sentiment=0.0,
                     confidence=0.0,
-                    summary="research_degraded_fallback",
+                    summary="fast_backtest_research_bypassed",
                     source_urls=[],
                 )
                 for s in symbols
-            },
-            trace_id=trace_id,
-            parent_span_id=root_span_id,
-        )
+            }
+        else:
+            research = self._stage_call(
+                "research",
+                run_id,
+                lambda: self.research.run(symbols),
+                lambda: {
+                    s: ResearchSignal(
+                        symbol=s,
+                        sentiment=0.0,
+                        confidence=0.0,
+                        summary="research_degraded_fallback",
+                        source_urls=[],
+                    )
+                    for s in symbols
+                },
+                trace_id=trace_id,
+                parent_span_id=root_span_id,
+            )
         self.audit.append("research_output", run_id, {k: v.to_dict() for k, v in research.items()})
 
         strategy_scores = self._stage_call(
@@ -323,7 +351,11 @@ class CentralizedHedgeFundSystem:
         )
 
         private_scores = self.private_alpha.run(symbols)
-        council_scores, council_details = self.research_council.run(symbols)
+        if fast_backtest:
+            council_scores = pd.Series(0.0, index=symbols)
+            council_details = {s: {"mode": "fast_backtest_disabled"} for s in symbols}
+        else:
+            council_scores, council_details = self.research_council.run(symbols)
         self.audit.append(
             "research_council",
             run_id,
@@ -335,14 +367,17 @@ class CentralizedHedgeFundSystem:
         if disagreement > dis_threshold:
             self.alerts.notify("strategy_disagreement_high", {"run_id": run_id, "value": disagreement})
 
-        regime_snapshot = self._stage_call(
-            "regime",
-            run_id,
-            lambda: self.regime_agent.run(prefer_india=str(self.cfg.get("execution", {}).get("market_mode", "us")) == "india"),
-            lambda: RegimeSnapshot(regime="trend", confidence=0.5, leverage_cap=1.0, risk_multiplier=1.0),
-            trace_id=trace_id,
-            parent_span_id=root_span_id,
-        )
+        if fast_backtest:
+            regime_snapshot = self._regime_from_window(window)
+        else:
+            regime_snapshot = self._stage_call(
+                "regime",
+                run_id,
+                lambda: self.regime_agent.run(prefer_india=str(self.cfg.get("execution", {}).get("market_mode", "us")) == "india"),
+                lambda: RegimeSnapshot(regime="trend", confidence=0.5, leverage_cap=1.0, risk_multiplier=1.0),
+                trace_id=trace_id,
+                parent_span_id=root_span_id,
+            )
         self.audit.append(
             "regime_snapshot",
             run_id,
@@ -393,7 +428,7 @@ class CentralizedHedgeFundSystem:
         else:
             combined = combined + float(self.cfg.get("microstructure", {}).get("blend_weight", 0.05)) * micro
 
-        macro_snapshot = self.macro_intel.snapshot()
+        macro_snapshot = {"mode": "fast_backtest_disabled"} if fast_backtest else self.macro_intel.snapshot()
         self.audit.append("macro_intelligence", run_id, macro_snapshot)
         pre_risk = self.fund_manager.run(combined)
         regime = regime_snapshot.regime

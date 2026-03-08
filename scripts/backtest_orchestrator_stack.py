@@ -42,6 +42,7 @@ def run_orchestrator_backtest(
     end_date: str | None,
     step_days: int,
     max_cycles: int,
+    use_prices_override: bool = True,
 ) -> tuple[pd.DataFrame, pd.Series, pd.Series, pd.Series, dict[str, float]]:
     pcfg = cfg["portfolio"]
     prices = download_close_prices(
@@ -76,7 +77,10 @@ def run_orchestrator_backtest(
     for i in decision_rows:
         dt = prices.index[i]
         system.cfg["portfolio"]["end_date"] = dt.strftime("%Y-%m-%d")
-        decision = system.run_cycle(execute=False)
+        decision = system.run_cycle(
+            execute=False,
+            prices_override=prices.iloc[: i + 1] if use_prices_override else None,
+        )
         w = pd.Series(decision.target_weights).reindex(prices.columns).fillna(0.0)
         turnover = float((w - prev_w).abs().sum())
         next_ret = float((w * rets.iloc[i + 1]).sum())
@@ -109,10 +113,13 @@ def main() -> None:
     parser.add_argument("--to-date", default=None, help="Backtest end date YYYY-MM-DD")
     parser.add_argument("--step-days", type=int, default=5, help="Decision frequency in trading days")
     parser.add_argument("--max-cycles", type=int, default=0, help="0 = all available cycles")
+    parser.add_argument("--fast-mode", action="store_true", help="Disable network-heavy stages for fast replay.")
     parser.add_argument("--out", default="outputs/orchestrator_backtest")
     args = parser.parse_args()
 
     cfg = load_config(args.config)
+    cfg.setdefault("backtest", {})
+    cfg["backtest"]["fast_mode"] = bool(args.fast_mode)
     pcfg = cfg["portfolio"]
     start_date = args.from_date or pcfg["start_date"]
     end_date = args.to_date or pcfg.get("end_date")
@@ -124,6 +131,7 @@ def main() -> None:
         end_date=end_date,
         step_days=max(1, int(args.step_days)),
         max_cycles=int(args.max_cycles),
+        use_prices_override=True,
     )
 
     wdf.to_csv(out_dir / "weights.csv")
