@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 import numpy as np
 import pandas as pd
 import yfinance as yf
@@ -17,51 +18,160 @@ def _zscore(series: pd.Series) -> pd.Series:
 @dataclass
 class AlphaPipelineAgents:
     """High-conviction alpha proxies with free/public inputs and deterministic fallbacks."""
+    enabled_signals: list[str] | None = None
+
+    def _has_signal(self, name: str) -> bool:
+        if not self.enabled_signals:
+            return True
+        return name in set(self.enabled_signals)
+
+    def _safe_close(self, symbol: str, period: str = "9mo") -> pd.Series:
+        try:
+            data = yf.download(symbol, period=period, auto_adjust=True, progress=False)
+            if data.empty:
+                return pd.Series(dtype=float)
+            if isinstance(data.columns, pd.MultiIndex):
+                close = data["Close"].iloc[:, 0]
+            else:
+                close = data["Close"] if "Close" in data else data.iloc[:, 0]
+            return close.dropna().astype(float)
+        except Exception:
+            return pd.Series(dtype=float)
 
     def earnings_momentum(self, prices: pd.DataFrame) -> pd.Series:
-        # Proxy for post-earnings drift: short-term continuation after gap-like move.
-        r1 = prices.pct_change(1).iloc[-1]
-        r3 = prices.pct_change(3).iloc[-1]
-        return _zscore(0.6 * r1 + 0.4 * r3)
+        # Post-earnings drift proxy: combine known earnings surprise with recent event-window momentum.
+        out: dict[str, float] = {}
+        for s in prices.columns:
+            surprise = 0.0
+            try:
+                t = yf.Ticker(s)
+                ed = t.earnings_dates
+                if isinstance(ed, pd.DataFrame) and not ed.empty:
+                    row = ed.head(1).iloc[0]
+                    est = float(row.get("EPS Estimate", 0.0) or 0.0)
+                    rep = float(row.get("Reported EPS", 0.0) or 0.0)
+                    if abs(est) > 1e-12:
+                        surprise = (rep - est) / abs(est)
+            except Exception:
+                surprise = 0.0
+            r1 = float(prices[s].pct_change(1).iloc[-1])
+            r3 = float(prices[s].pct_change(3).iloc[-1])
+            out[s] = 0.6 * surprise + 0.25 * r1 + 0.15 * r3
+        return _zscore(pd.Series(out, dtype=float))
 
-    def fii_dii_flow(self, prices: pd.DataFrame) -> pd.Series:
-        # Free proxy for institutional flow pressure: return persistence vs realized volatility.
-        rets = prices.pct_change().dropna()
-        momentum = rets.tail(5).mean()
-        vol = rets.tail(20).std(ddof=0).replace(0, np.nan)
-        flow_proxy = momentum / vol
-        return _zscore(flow_proxy.fillna(0.0))
+    def analyst_revisions(self, prices: pd.DataFrame) -> pd.Series:
+        # Analyst revision signal from recommendation trend and net upgrade pressure.
+        out: dict[str, float] = {}
+        for s in prices.columns:
+            score = 0.0
+            try:
+                t = yf.Ticker(s)
+                rec = t.recommendations
+                if isinstance(rec, pd.DataFrame) and not rec.empty:
+                    recent = rec.tail(12)
+                    to_grade = recent.get("To Grade")
+                    from_grade = recent.get("From Grade")
+                    if to_grade is not None and from_grade is not None:
+                        upgrades = 0
+                        downgrades = 0
+                        for tg, fg in zip(to_grade.fillna(""), from_grade.fillna("")):
+                            tgt = str(tg).lower()
+                            frm = str(fg).lower()
+                            if any(k in tgt for k in ("buy", "overweight", "outperform")) and not any(
+                                k in frm for k in ("buy", "overweight", "outperform")
+                            ):
+                                upgrades += 1
+                            if any(k in tgt for k in ("sell", "underperform")) and not any(
+                                k in frm for k in ("sell", "underperform")
+                            ):
+                                downgrades += 1
+                        score = float(upgrades - downgrades)
+            except Exception:
+                score = 0.0
+            # Deterministic fallback if no recommendation feed.
+            if abs(score) <= 1e-12:
+                score = float(prices[s].pct_change(20).iloc[-1] - prices[s].pct_change(5).iloc[-1])
+            out[s] = score
+        return _zscore(pd.Series(out, dtype=float))
 
-    def options_flow(self, prices: pd.DataFrame) -> pd.Series:
-        # Free proxy for gamma/PCR-like tension using vol-of-vol and directional skew.
-        rets = prices.pct_change().dropna()
-        vol_short = rets.tail(5).std(ddof=0)
-        vol_long = rets.tail(30).std(ddof=0).replace(0, np.nan)
-        skew_proxy = rets.tail(10).mean()
-        signal = skew_proxy - (vol_short / vol_long).fillna(0.0)
-        return _zscore(signal)
+    def options_iv_term_structure(self, prices: pd.DataFrame) -> pd.Series:
+        # Term structure: near IV minus far IV; positive suggests event/tension risk.
+        out: dict[str, float] = {}
+        for s in prices.columns:
+            value = 0.0
+            try:
+                t = yf.Ticker(s)
+                expiries = list(t.options or [])
+                if len(expiries) >= 2:
+                    c0 = t.option_chain(expiries[0]).calls
+                    c1 = t.option_chain(expiries[min(2, len(expiries) - 1)]).calls
+                    if not c0.empty and not c1.empty:
+                        iv0 = float(c0["impliedVolatility"].dropna().mean())
+                        iv1 = float(c1["impliedVolatility"].dropna().mean())
+                        if math.isfinite(iv0) and math.isfinite(iv1):
+                            value = iv0 - iv1
+            except Exception:
+                value = 0.0
+            # Fallback to realized vol slope.
+            if abs(value) <= 1e-12:
+                rets = prices[s].pct_change().dropna()
+                rv_short = float(rets.tail(5).std(ddof=0)) if len(rets) >= 5 else 0.0
+                rv_long = float(rets.tail(30).std(ddof=0)) if len(rets) >= 30 else 0.0
+                value = rv_short - rv_long
+            out[s] = value
+        return _zscore(pd.Series(out, dtype=float))
 
     def short_interest(self, prices: pd.DataFrame) -> pd.Series:
-        # Free proxy for squeeze risk: strong positive returns + elevated volatility.
+        # Short squeeze proxy: positive momentum with high vol.
         rets = prices.pct_change().dropna()
         r5 = rets.tail(5).mean()
         vol = rets.tail(10).std(ddof=0)
         return _zscore(r5 * vol)
 
     def block_deals(self, prices: pd.DataFrame) -> pd.Series:
-        # Free proxy for block-deal continuation via abnormal move persistence.
+        # Block-deal continuation proxy via abnormal move persistence.
         r1 = prices.pct_change(1).iloc[-1]
         r10 = prices.pct_change(10).iloc[-1]
         return _zscore(0.5 * r1 + 0.5 * r10)
 
+    def volume_liquidity_shock(self, prices: pd.DataFrame) -> pd.Series:
+        # Use volume shock when available; fallback to return shock.
+        out: dict[str, float] = {}
+        for s in prices.columns:
+            shock = 0.0
+            try:
+                hist = yf.download(s, period="6mo", auto_adjust=True, progress=False)
+                if isinstance(hist, pd.DataFrame) and not hist.empty and "Volume" in hist.columns:
+                    v = hist["Volume"].dropna().astype(float)
+                    if len(v) >= 30:
+                        adv20 = float(v.tail(20).mean())
+                        adv60 = float(v.tail(60).mean()) if len(v) >= 60 else adv20
+                        if adv60 > 1e-12:
+                            shock = (adv20 / adv60) - 1.0
+            except Exception:
+                shock = 0.0
+            if abs(shock) <= 1e-12:
+                r = prices[s].pct_change().dropna()
+                if len(r) >= 20:
+                    shock = float(r.tail(5).std(ddof=0) - r.tail(20).std(ddof=0))
+            out[s] = shock
+        return _zscore(pd.Series(out, dtype=float))
+
     def run(self, prices: pd.DataFrame) -> dict[str, pd.Series]:
-        return {
-            "earnings_momentum": self.earnings_momentum(prices),
-            "fii_dii_flow": self.fii_dii_flow(prices),
-            "options_flow": self.options_flow(prices),
-            "short_interest": self.short_interest(prices),
-            "block_deals": self.block_deals(prices),
-        }
+        signals: dict[str, pd.Series] = {}
+        if self._has_signal("earnings_momentum"):
+            signals["earnings_momentum"] = self.earnings_momentum(prices)
+        if self._has_signal("analyst_revisions"):
+            signals["analyst_revisions"] = self.analyst_revisions(prices)
+        if self._has_signal("options_iv_term_structure"):
+            signals["options_iv_term_structure"] = self.options_iv_term_structure(prices)
+        if self._has_signal("volume_liquidity_shock"):
+            signals["volume_liquidity_shock"] = self.volume_liquidity_shock(prices)
+        if self._has_signal("short_interest"):
+            signals["short_interest"] = self.short_interest(prices)
+        if self._has_signal("block_deals"):
+            signals["block_deals"] = self.block_deals(prices)
+        return signals
 
 
 @dataclass

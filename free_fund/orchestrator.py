@@ -83,7 +83,9 @@ class CentralizedHedgeFundSystem:
         self.strategy.dynamic_min_weight = float(dyn_cfg.get("dynamic_min_weight", 0.05))
         self.strategy.dynamic_max_weight = float(dyn_cfg.get("dynamic_max_weight", 0.50))
         self.strategy.dynamic_smoothing = float(dyn_cfg.get("dynamic_smoothing", 0.30))
-        self.alpha_pipeline = AlphaPipelineAgents()
+        self.alpha_pipeline = AlphaPipelineAgents(
+            enabled_signals=list(self.cfg.get("alpha_pipeline", {}).get("enabled_signals", []) or []),
+        )
         self.arbitrage = CrossAssetArbitrageAgents()
         self.macro_intel = MacroIntelligenceAgents()
         self.micro = MicrostructureAgents()
@@ -128,6 +130,20 @@ class CentralizedHedgeFundSystem:
         self._last_final_weights = pd.Series(dtype=float)
         self._cycle_count = 0
         self._last_rebalance_cycle = -10**9
+
+    @staticmethod
+    def _normalize_weights(weights: dict[str, float]) -> dict[str, float]:
+        s = float(sum(max(0.0, float(v)) for v in weights.values()))
+        if s <= 1e-12:
+            return weights
+        return {k: max(0.0, float(v)) / s for k, v in weights.items()}
+
+    @staticmethod
+    def _zscore_series(series: pd.Series) -> pd.Series:
+        std = float(series.std(ddof=0))
+        if std <= 1e-12:
+            return pd.Series(0.0, index=series.index)
+        return (series - float(series.mean())) / std
 
     def _stage_call(
         self,
@@ -322,38 +338,48 @@ class CentralizedHedgeFundSystem:
             {name: score.round(6).to_dict() for name, score in strategy_scores.items()},
         )
 
-        alpha_scores = self._stage_call(
-            "alpha_pipeline",
-            run_id,
-            lambda: self.alpha_pipeline.run(window),
-            lambda: {"alpha_pipeline_degraded": pd.Series(0.0, index=symbols)},
-            trace_id=trace_id,
-            parent_span_id=root_span_id,
-        )
+        alpha_weight = float(self.cfg.get("alpha_pipeline", {}).get("blend_weight", 0.15))
+        if alpha_weight > 0:
+            alpha_scores = self._stage_call(
+                "alpha_pipeline",
+                run_id,
+                lambda: self.alpha_pipeline.run(window),
+                lambda: {"alpha_pipeline_degraded": pd.Series(0.0, index=symbols)},
+                trace_id=trace_id,
+                parent_span_id=root_span_id,
+            )
+        else:
+            alpha_scores = {}
         self.audit.append(
             "alpha_pipeline_scores",
             run_id,
             {name: score.round(6).to_dict() for name, score in alpha_scores.items()},
         )
 
-        arb_scores = self._stage_call(
-            "arbitrage",
-            run_id,
-            lambda: self.arbitrage.run(window),
-            lambda: {"arbitrage_degraded": pd.Series(0.0, index=symbols)},
-            trace_id=trace_id,
-            parent_span_id=root_span_id,
-        )
+        arb_weight = float(self.cfg.get("arbitrage", {}).get("blend_weight", 0.10))
+        if arb_weight > 0:
+            arb_scores = self._stage_call(
+                "arbitrage",
+                run_id,
+                lambda: self.arbitrage.run(window),
+                lambda: {"arbitrage_degraded": pd.Series(0.0, index=symbols)},
+                trace_id=trace_id,
+                parent_span_id=root_span_id,
+            )
+        else:
+            arb_scores = {}
         self.audit.append(
             "arbitrage_scores",
             run_id,
             {name: score.round(6).to_dict() for name, score in arb_scores.items()},
         )
 
-        private_scores = self.private_alpha.run(symbols)
-        if fast_backtest:
+        private_weight = float(self.cfg.get("private_alpha", {}).get("blend_weight", 0.05))
+        private_scores = self.private_alpha.run(symbols) if private_weight > 0 else {}
+        council_weight = float(self.cfg.get("research_council", {}).get("blend_weight", 0.10))
+        if fast_backtest or council_weight <= 0:
             council_scores = pd.Series(0.0, index=symbols)
-            council_details = {s: {"mode": "fast_backtest_disabled"} for s in symbols}
+            council_details = {s: {"mode": "disabled_or_fast_backtest"} for s in symbols}
         else:
             council_scores, council_details = self.research_council.run(symbols)
         self.audit.append(
@@ -389,12 +415,12 @@ class CentralizedHedgeFundSystem:
             },
         )
 
-        combined = self.strategy.weighted_score(strategy_scores) * regime_snapshot.risk_multiplier
-
-        alpha_weight = float(self.cfg.get("alpha_pipeline", {}).get("blend_weight", 0.15))
-        arb_weight = float(self.cfg.get("arbitrage", {}).get("blend_weight", 0.10))
-        council_weight = float(self.cfg.get("research_council", {}).get("blend_weight", 0.10))
-        private_weight = float(self.cfg.get("private_alpha", {}).get("blend_weight", 0.05))
+        regime_cfg = self.cfg.get("regime_controls", {})
+        regime_w_map = regime_cfg.get("strategy_weights_by_regime", {})
+        w_override = regime_w_map.get(regime_snapshot.regime)
+        if isinstance(w_override, dict):
+            w_override = self._normalize_weights(w_override)
+        combined = self.strategy.weighted_score(strategy_scores, weight_overrides=w_override) * regime_snapshot.risk_multiplier
 
         if alpha_scores:
             alpha_combined = pd.concat(alpha_scores.values(), axis=1).mean(axis=1).reindex(symbols).fillna(0.0)
@@ -406,6 +432,18 @@ class CentralizedHedgeFundSystem:
             p_combined = pd.concat(private_scores.values(), axis=1).mean(axis=1).reindex(symbols).fillna(0.0)
             combined = combined + private_weight * p_combined
         combined = combined + council_weight * council_scores.reindex(symbols).fillna(0.0)
+
+        # Explicit benchmark-relative objective: expected excess return vs benchmark.
+        bench_cfg = self.cfg.get("benchmark", {})
+        bench_mode = str(bench_cfg.get("mode", "symbol"))
+        bench_symbol = str(bench_cfg.get("symbol", symbols[0]))
+        bench_w = float(bench_cfg.get("alpha_weight", 0.20))
+        r20 = window.pct_change(20).iloc[-1].reindex(symbols).fillna(0.0)
+        if bench_mode == "equal_weight":
+            bench_ret = float(r20.mean())
+        else:
+            bench_ret = float(r20.get(bench_symbol, 0.0))
+        combined = combined + bench_w * self._zscore_series(r20 - bench_ret).reindex(symbols).fillna(0.0)
 
         # Optional adaptive update for strategy blend.
         if bool(self.cfg.get("learning", {}).get("enabled", False)):
@@ -421,21 +459,47 @@ class CentralizedHedgeFundSystem:
             )
             self.audit.append("adaptive_learning_update", run_id, {"weights": self.strategy.strategy_weights})
 
-        micro = self.micro.order_book_agent(symbols) + self.micro.tape_reading(symbols) + self.micro.latency_arb(symbols)
-        if self.micro.flash_crash_detector(window):
-            combined = combined * 0.0
-            self.audit.append("flash_crash_detector", run_id, {"triggered": True})
-        else:
-            combined = combined + float(self.cfg.get("microstructure", {}).get("blend_weight", 0.05)) * micro
+        micro_weight = float(self.cfg.get("microstructure", {}).get("blend_weight", 0.05))
+        if micro_weight > 0:
+            micro = self.micro.order_book_agent(symbols) + self.micro.tape_reading(symbols) + self.micro.latency_arb(symbols)
+            if self.micro.flash_crash_detector(window):
+                combined = combined * 0.0
+                self.audit.append("flash_crash_detector", run_id, {"triggered": True})
+            else:
+                combined = combined + micro_weight * micro
 
         macro_snapshot = {"mode": "fast_backtest_disabled"} if fast_backtest else self.macro_intel.snapshot()
         self.audit.append("macro_intelligence", run_id, macro_snapshot)
-        pre_risk = self.fund_manager.run(combined)
+        risk_penalty = window.pct_change().dropna().tail(60).std(ddof=0).reindex(symbols).fillna(0.0)
+        fm_cfg = self.cfg.get("fund_manager", {})
+        turnover_penalty = float(fm_cfg.get("turnover_penalty", 1.0))
+        risk_penalty_scale = float(fm_cfg.get("risk_penalty_scale", 0.5))
+        gross_by_regime = regime_cfg.get("gross_limit_by_regime", {})
+        gross_override = gross_by_regime.get(regime_snapshot.regime)
+
+        pre_risk = self.fund_manager.run(
+            combined_score=combined,
+            prev_weights=self._last_final_weights.reindex(symbols).fillna(0.0) if not self._last_final_weights.empty else None,
+            risk_penalty=self._zscore_series(risk_penalty) * risk_penalty_scale,
+            turnover_penalty=turnover_penalty,
+            gross_limit_override=(float(gross_override) if gross_override is not None else None),
+        )
+        if regime_snapshot.regime == "stress":
+            defensive_assets = regime_cfg.get("defensive_assets", ["TLT", "GLD"])
+            defensive_tilt = float(regime_cfg.get("defensive_tilt", 0.10))
+            for ds in defensive_assets:
+                if ds in pre_risk.index:
+                    pre_risk.loc[ds] = pre_risk.loc[ds] + defensive_tilt / max(1, len(defensive_assets))
+            # Re-normalize after defensive tilt.
+            gross_now = float(pre_risk.abs().sum())
+            gross_lim = float(gross_override) if gross_override is not None else float(self.cfg["portfolio"]["gross_limit"])
+            if gross_now > gross_lim and gross_now > 1e-12:
+                pre_risk = pre_risk / gross_now * gross_lim
         regime = regime_snapshot.regime
         final_weights, risk_flags = self._stage_call(
             "risk",
             run_id,
-            lambda: self.risk.run(pre_risk, window, regime=regime, benchmark_symbol=symbols[0]),
+            lambda: self.risk.run(pre_risk, window, regime=regime, benchmark_symbol=bench_symbol),
             lambda: (pd.Series(0.0, index=symbols), ["risk_stage_failed_safe_zero"]),
             trace_id=trace_id,
             parent_span_id=root_span_id,

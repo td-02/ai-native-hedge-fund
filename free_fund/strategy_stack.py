@@ -70,11 +70,16 @@ class StrategyEnsembleAgent:
         }
         return {name: series.reindex(symbols).fillna(0.0) for name, series in outputs.items()}
 
-    def weighted_score(self, strategy_scores: dict[str, pd.Series]) -> pd.Series:
+    def weighted_score(
+        self,
+        strategy_scores: dict[str, pd.Series],
+        weight_overrides: dict[str, float] | None = None,
+    ) -> pd.Series:
         symbols = next(iter(strategy_scores.values())).index
+        active_weights = self.strategy_weights if weight_overrides is None else weight_overrides
         combined = pd.Series(0.0, index=symbols)
         for name, score in strategy_scores.items():
-            combined = combined + float(self.strategy_weights.get(name, 0.0)) * score
+            combined = combined + float(active_weights.get(name, 0.0)) * score
         return _zscore(combined)
 
     def estimate_strategy_quality(
@@ -127,17 +132,35 @@ class FundManagerAgent:
     max_weight: float
     gross_limit: float
 
-    def run(self, combined_score: pd.Series) -> pd.Series:
-        score = combined_score.fillna(0.0)
+    def run(
+        self,
+        combined_score: pd.Series,
+        prev_weights: pd.Series | None = None,
+        risk_penalty: pd.Series | None = None,
+        turnover_penalty: float = 0.0,
+        gross_limit_override: float | None = None,
+    ) -> pd.Series:
+        score = combined_score.fillna(0.0).copy()
+        if risk_penalty is not None:
+            rp = risk_penalty.reindex(score.index).fillna(float(risk_penalty.mean()) if len(risk_penalty) else 0.0)
+            score = score - rp
+
         gross = float(score.abs().sum())
         if gross <= 1e-12:
             return pd.Series(0.0, index=score.index)
-        weights = (score / gross) * self.gross_limit
+        gross_target = float(self.gross_limit if gross_limit_override is None else gross_limit_override)
+        weights = (score / gross) * gross_target
         weights = weights.clip(lower=-self.max_weight, upper=self.max_weight)
 
+        if prev_weights is not None:
+            prev = prev_weights.reindex(weights.index).fillna(0.0)
+            # Higher penalty keeps portfolio closer to previous allocations.
+            alpha = 1.0 / (1.0 + max(0.0, turnover_penalty))
+            weights = prev + alpha * (weights - prev)
+
         gross2 = float(weights.abs().sum())
-        if gross2 > self.gross_limit and gross2 > 1e-12:
-            weights = weights / gross2 * self.gross_limit
+        if gross2 > gross_target and gross2 > 1e-12:
+            weights = weights / gross2 * gross_target
         return weights.fillna(0.0)
 
 
