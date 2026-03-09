@@ -56,3 +56,86 @@ if audit_path.exists():
     st.dataframe(pd.DataFrame(audit_rows))
 else:
     st.info('No audit log yet. Decision cycles will create outputs/audit/events.jsonl')
+
+# ============================================================
+# AI INTELLIGENCE LAYER (new additive section)
+# ============================================================
+with st.expander(" AI Intelligence Layer", expanded=False):
+
+    col1, col2 = st.columns(2)
+
+    # Panel A: LLM Provider Status
+    with col1:
+        st.subheader("LLM Provider Status")
+        try:
+            from llm_router import get_provider_stats
+            stats = get_provider_stats()
+            if stats:
+                rows = []
+                for provider, data in stats.items():
+                    failure_rate = (data["failures"] / data["calls"] * 100) if data["calls"] > 0 else 0
+                    rows.append({"Provider": provider, "Calls": data["calls"],
+                                 "Failures": data["failures"], "Avg Latency (ms)": round(data.get("avg_latency", 0)),
+                                 "Failure Rate %": round(failure_rate, 1)})
+                df_stats = pd.DataFrame(rows)
+                st.dataframe(df_stats, use_container_width=True)
+            else:
+                st.info("No LLM calls made yet this session.")
+        except Exception:
+            st.info("LLM router not active.")
+
+    # Panel B: AI Alpha Signals
+    with col2:
+        st.subheader("AI Alpha Signals")
+        try:
+            import json, os
+            if os.path.exists("outputs/ai_alpha_latest.json"):
+                with open("outputs/ai_alpha_latest.json") as f:
+                    ai_alpha = json.load(f)
+                tickers = list(ai_alpha.keys())
+                combined = [ai_alpha[t].get("combined_alpha", 0) for t in tickers]
+                df_alpha = pd.DataFrame({"Ticker": tickers, "AI Alpha Signal": combined})
+                st.bar_chart(df_alpha.set_index("Ticker"))
+            else:
+                st.info("No AI alpha data yet. Enable ai_alpha.enabled in config.")
+        except Exception:
+            st.info("AI alpha data unavailable.")
+
+    col3, col4 = st.columns(2)
+
+    # Panel C: Bayesian Portfolio Weights
+    with col3:
+        st.subheader("Bayesian Portfolio Weights")
+        try:
+            if os.path.exists("outputs/bayesian_weights_latest.json"):
+                with open("outputs/bayesian_weights_latest.json") as f:
+                    bw = json.load(f)
+                mean_w = bw.get("mean_weights", {})
+                std_w = bw.get("std_weights", {})
+                if mean_w:
+                    df_bw = pd.DataFrame({
+                        "Ticker": list(mean_w.keys()),
+                        "Mean Weight": list(mean_w.values()),
+                        "Std": [std_w.get(t, 0) for t in mean_w.keys()]
+                    })
+                    st.dataframe(df_bw, use_container_width=True)
+            else:
+                st.info("No Bayesian weights yet. Enable bayesian_optimizer.enabled in config.")
+        except Exception:
+            st.info("Bayesian weights unavailable.")
+
+    # Panel D: Regime Intelligence
+    with col4:
+        st.subheader("Regime Intelligence")
+        try:
+            if os.path.exists("outputs/regime_latest.json"):
+                with open("outputs/regime_latest.json") as f:
+                    reg = json.load(f)
+                st.metric("Current Regime", reg.get("most_likely", "Unknown"))
+                st.metric("Bull Probability", f"{reg.get('bull', 0):.1%}")
+                st.metric("Bear Probability", f"{reg.get('bear', 0):.1%}")
+                st.metric("Crisis Probability", f"{reg.get('crisis', 0):.1%}")
+            else:
+                st.info("No regime data yet.")
+        except Exception:
+            st.info("Regime data unavailable.")

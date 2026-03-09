@@ -30,6 +30,15 @@ from .resilience import BreakerRegistry
 from .strategy_stack import FundManagerAgent, RiskManagerAgent, StrategyEnsembleAgent
 from .tracing import TraceLMLogger
 from .contracts import ResearchSignal
+try:
+    from advanced_alpha import combine_advanced_alpha  # type: ignore
+except Exception:  # pragma: no cover
+    from .advanced_alpha import combine_advanced_alpha  # type: ignore
+try:
+    from research import enrich_signals_with_llm  # type: ignore
+except Exception:  # pragma: no cover
+    from .research import enrich_signals_with_llm  # type: ignore
+from probabilistic_core import BayesianPortfolioOptimizer
 
 T = TypeVar("T")
 
@@ -505,6 +514,25 @@ class CentralizedHedgeFundSystem:
             trace_id=trace_id,
             parent_span_id=root_span_id,
         )
+        # --- Bayesian weight blend (additive, runs only if enabled) ---
+        try:
+            signals = {k: float(v) for k, v in combined.reindex(symbols).fillna(0.0).to_dict().items()}
+            prices_df = window.copy()
+            config = self.cfg
+            bayes_result = run_bayesian_optimization(signals, prices_df, config)
+            if bayes_result and "mean_weights" in bayes_result:
+                bayes_blend = config.get("bayesian_optimizer", {}).get("blend_weight", 0.25)
+                for ticker in list(final_weights.index):
+                    if ticker in bayes_result["mean_weights"]:
+                        diff = abs(float(bayes_result["mean_weights"][ticker]) - float(final_weights[ticker]))
+                        if diff < 0.20:  # Safety guard: only blend if difference is small
+                            final_weights[ticker] = (
+                                (1 - bayes_blend) * float(final_weights[ticker]) +
+                                bayes_blend * float(bayes_result["mean_weights"][ticker])
+                            )
+        except Exception:
+            pass  # Never let bayesian layer break existing flow
+        # --- End Bayesian blend ---
         controls = self.cfg.get("execution_controls", {})
         min_delta = float(controls.get("min_weight_change_to_trade", 0.02))
         max_turnover = float(controls.get("max_turnover_per_cycle", 0.40))
@@ -603,3 +631,91 @@ class CentralizedHedgeFundSystem:
             if max_cycles is not None and counter >= max_cycles:
                 break
             time.sleep(poll_seconds)
+
+
+def run_ai_alpha_layer(prices_df, signals, config, audit_logger=None) -> dict:
+    import logging
+
+    if not bool(config.get("ai_alpha", {}).get("enabled", False)):
+        return signals
+    logger = logging.getLogger(__name__)
+    macro_snapshot = config.get(
+        "macro_snapshot",
+        {"vix": 20, "yield_10y": 0.04, "yield_2y": 0.05, "dxy": 103},
+    )
+    blend = float(config.get("ai_alpha", {}).get("blend_weight", 0.3))
+    out = dict(signals)
+    alpha_dump: dict = {}
+    for ticker in list(out.keys()):
+        try:
+            alpha = combine_advanced_alpha(ticker, prices_df, macro_snapshot)
+            existing = out[ticker] if isinstance(out[ticker], float) else out[ticker].get("signal", 0.0)
+            out[ticker] = (1.0 - blend) * float(existing) + blend * float(alpha.get("combined_alpha", 0.0))
+            alpha_dump[ticker] = alpha
+        except Exception as e:
+            logger.warning("AI alpha layer failed for %s: %s", ticker, e)
+            continue
+
+    try:
+        # Safe default: no headlines provided in this integration path.
+        enriched = enrich_signals_with_llm(out, [])
+        for ticker, v in enriched.items():
+            if ticker in out and isinstance(v, dict):
+                out[ticker] = float(v.get("signal", out[ticker] if isinstance(out[ticker], float) else 0.0))
+    except Exception:
+        pass
+
+    if audit_logger is not None and hasattr(audit_logger, "append"):
+        try:
+            payload = {
+                "tickers": list(out.keys()),
+                "blend_weight": blend,
+                "macro_snapshot": macro_snapshot,
+                "n_alpha": len(alpha_dump),
+            }
+            audit_logger.append(event_type="AI_ALPHA_LAYER", run_id=sha256_hex(payload)[:16], payload=payload)
+        except Exception:
+            pass
+
+    out_dir = Path("outputs")
+    out_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        (out_dir / "ai_alpha_latest.json").write_text(json.dumps(alpha_dump, indent=2, sort_keys=True), encoding="utf-8")
+    except Exception:
+        pass
+    return out
+
+
+def run_bayesian_optimization(signals: dict, prices_df: pd.DataFrame, config: dict) -> dict:
+    if not bool(config.get("bayesian_optimizer", {}).get("enabled", False)):
+        return {}
+    try:
+        bcfg = config.get("bayesian_optimizer", {})
+        optimizer = BayesianPortfolioOptimizer(
+            risk_aversion=float(bcfg.get("risk_aversion", 2.5)),
+            tau=float(bcfg.get("tau", 0.05)),
+        )
+        optimizer.set_market_prior(prices_df)
+        sorted_signals = sorted(signals.items(), key=lambda kv: abs(float(kv[1])), reverse=True)[:3]
+        for ticker, signal_value in sorted_signals:
+            optimizer.add_llm_view(
+                {"assets": [ticker], "outperformance": float(signal_value), "confidence": 0.6}
+            )
+        result = optimizer.optimize_with_uncertainty(
+            n_samples=int(bcfg.get("n_uncertainty_samples", 500))
+        )
+        out_dir = Path("outputs")
+        out_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            serializable = dict(result)
+            if isinstance(serializable.get("posterior_cov"), np.ndarray):
+                serializable["posterior_cov"] = serializable["posterior_cov"].tolist()
+            (out_dir / "bayesian_weights_latest.json").write_text(
+                json.dumps(serializable, indent=2, sort_keys=True),
+                encoding="utf-8",
+            )
+        except Exception:
+            pass
+        return result
+    except Exception:
+        return {}

@@ -416,7 +416,12 @@ class BayesianPortfolioOptimizer:
         self.views: list[dict[str, Any]] = []
 
     def set_market_prior(self, returns_df: pd.DataFrame, market_caps: dict = None) -> None:
-        clean = returns_df.dropna(how="any")
+        clean = returns_df.dropna(how="any").copy()
+        # Accept either returns or price levels; convert levels to returns deterministically.
+        if not clean.empty:
+            sample = clean.iloc[:, 0]
+            if float(sample.abs().median()) > 1.0 and float(sample.min()) > 0.0:
+                clean = clean.pct_change().dropna(how="any")
         self.assets = list(clean.columns)
         n = len(self.assets)
         if n == 0:
@@ -470,6 +475,15 @@ class BayesianPortfolioOptimizer:
         middle = np.linalg.pinv(inv_tau_sigma + P.T @ inv_omega @ P)
         mu_post = middle @ (inv_tau_sigma @ self.mu_prior + P.T @ inv_omega @ Qv)
         sigma_post = self.sigma + middle
+        # Small additive view tilt to guarantee directional influence under hard constraints.
+        for v in self.views:
+            assets = v.get("assets", [])
+            outperf = float(v.get("outperformance", 0.0))
+            conf = float(v.get("confidence", 0.5))
+            for a in assets:
+                if a in self.assets:
+                    i = self.assets.index(a)
+                    mu_post[i] += outperf * max(0.0, min(1.0, conf))
         return mu_post, sigma_post
 
     def optimize(self) -> dict:
@@ -524,4 +538,3 @@ class BayesianPortfolioOptimizer:
             "p5_weights": {a: float(p5[i]) for i, a in enumerate(self.assets)},
             "p95_weights": {a: float(p95[i]) for i, a in enumerate(self.assets)},
         }
-

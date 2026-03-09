@@ -2,9 +2,17 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import math
+import json
+import logging
 import numpy as np
 import pandas as pd
 import yfinance as yf
+try:
+    from probabilistic_core import BlackScholes, BayesianSignalAggregator
+except Exception:  # pragma: no cover
+    BlackScholes = None  # type: ignore
+    BayesianSignalAggregator = None  # type: ignore
+from llm_router import llm_chat
 
 
 def _zscore(series: pd.Series) -> pd.Series:
@@ -325,3 +333,277 @@ class PrivateDataAlphaAgents:
             "fo_lot_changes": neutral.copy(),
             "corporate_action_arb": neutral.copy(),
         }
+
+
+def _safe_llm_json(prompt: str, fallback: dict) -> dict:
+    try:
+        raw = llm_chat(prompt=prompt, system="", json_mode=True, timeout=15)
+        data = json.loads(raw) if raw else {}
+        if isinstance(data, dict):
+            return data
+        return dict(fallback)
+    except Exception:
+        return dict(fallback)
+
+
+def get_options_alpha(ticker: str, prices_df: pd.DataFrame) -> dict:
+    fallback = {"options_signal": 0.0, "atm_iv": 0.2, "skew": 0.0, "llm_interpretation": {}}
+    try:
+        t = yf.Ticker(ticker)
+        expiries = list(t.options or [])
+        if not expiries:
+            return fallback
+
+        spot = float(prices_df[ticker].dropna().iloc[-1]) if ticker in prices_df.columns and not prices_df[ticker].dropna().empty else 100.0
+        near_expiry = None
+        near_chain = None
+        for e in expiries:
+            chain = t.option_chain(e)
+            calls = chain.calls if hasattr(chain, "calls") else pd.DataFrame()
+            puts = chain.puts if hasattr(chain, "puts") else pd.DataFrame()
+            oi = float(calls.get("openInterest", pd.Series(dtype=float)).fillna(0.0).sum()) + float(
+                puts.get("openInterest", pd.Series(dtype=float)).fillna(0.0).sum()
+            )
+            if oi > 100:
+                near_expiry = e
+                near_chain = chain
+                break
+        if near_chain is None:
+            return fallback
+
+        calls = near_chain.calls.copy()
+        puts = near_chain.puts.copy()
+        if calls.empty or puts.empty:
+            return fallback
+
+        atm_idx = (calls["strike"] - spot).abs().idxmin()
+        atm_strike = float(calls.loc[atm_idx, "strike"])
+        atm_market = float(calls.loc[atm_idx, "lastPrice"]) if "lastPrice" in calls.columns else float(calls.loc[atm_idx, "bid"])
+        expiry_ts = pd.Timestamp(near_expiry)
+        ttm = max(1 / 365.0, float((expiry_ts - pd.Timestamp.utcnow()).total_seconds()) / (365.0 * 24.0 * 3600.0))
+
+        atm_iv = 0.2
+        if BlackScholes is not None and np.isfinite(atm_market) and atm_market > 0:
+            try:
+                bs = BlackScholes(S=spot, K=atm_strike, T=ttm, r=0.05, sigma=0.2)
+                iv = bs.implied_vol(market_price=atm_market, option_type="call")
+                if np.isfinite(iv):
+                    atm_iv = float(iv)
+            except Exception:
+                atm_iv = 0.2
+
+        low = 0.95 * spot
+        high = 1.05 * spot
+        otm_put = puts[(puts["strike"] < spot) & (puts["strike"] >= low)]
+        otm_call = calls[(calls["strike"] > spot) & (calls["strike"] <= high)]
+        put_iv = float(otm_put.get("impliedVolatility", pd.Series(dtype=float)).dropna().mean()) if not otm_put.empty else np.nan
+        call_iv = float(otm_call.get("impliedVolatility", pd.Series(dtype=float)).dropna().mean()) if not otm_call.empty else np.nan
+        if not np.isfinite(put_iv):
+            put_iv = atm_iv
+        if not np.isfinite(call_iv):
+            call_iv = atm_iv
+        skew = float(put_iv - call_iv)
+
+        term = 0.0
+        if len(expiries) >= 2:
+            far_chain = t.option_chain(expiries[-1])
+            far_calls = far_chain.calls.copy()
+            if not far_calls.empty and "strike" in far_calls.columns:
+                far_idx = (far_calls["strike"] - spot).abs().idxmin()
+                near_iv = float(calls.loc[atm_idx, "impliedVolatility"]) if "impliedVolatility" in calls.columns else atm_iv
+                far_iv = float(far_calls.loc[far_idx, "impliedVolatility"]) if "impliedVolatility" in far_calls.columns else near_iv
+                if np.isfinite(near_iv) and np.isfinite(far_iv):
+                    term = float(near_iv - far_iv)
+
+        llm_fb = {
+            "options_sentiment": 0.0,
+            "tail_risk_elevated": False,
+            "smart_money_direction": "neutral",
+            "iv_regime": "fair",
+        }
+        llm_data = _safe_llm_json(
+            (
+                f"Options market for {ticker}: ATM IV={atm_iv:.2%}, put/call skew={skew:.3f}, term structure={term:.3f}. "
+                "Return JSON: {'options_sentiment': float -1 to 1, 'tail_risk_elevated': bool, "
+                "'smart_money_direction': 'bullish|bearish|neutral', 'iv_regime': 'cheap|fair|expensive'}"
+            ),
+            llm_fb,
+        )
+        options_signal = float(max(-1.0, min(1.0, llm_data.get("options_sentiment", 0.0))))
+        return {
+            "options_signal": options_signal,
+            "atm_iv": float(atm_iv),
+            "skew": float(skew),
+            "llm_interpretation": llm_data,
+        }
+    except Exception:
+        return fallback
+
+
+def get_earnings_alpha(ticker: str) -> dict:
+    fallback = {"earnings_signal": 0.0, "days_to_earnings": None, "llm_forecast": {}}
+    try:
+        tk = yf.Ticker(ticker)
+        days_to_earnings = None
+        try:
+            cal = tk.calendar
+            if isinstance(cal, pd.DataFrame) and not cal.empty:
+                vals = cal.values.flatten().tolist()
+                for v in vals:
+                    try:
+                        ts = pd.Timestamp(v)
+                        delta = int((ts - pd.Timestamp.utcnow()).days)
+                        if delta >= 0:
+                            days_to_earnings = delta
+                            break
+                    except Exception:
+                        continue
+        except Exception:
+            days_to_earnings = None
+
+        surprise_mean = 0.0
+        surprise_std = 0.0
+        try:
+            ed = tk.earnings_dates
+            if isinstance(ed, pd.DataFrame) and not ed.empty:
+                ed2 = ed.head(4)
+                surprises = []
+                for _, r in ed2.iterrows():
+                    est = float(r.get("EPS Estimate", np.nan))
+                    rep = float(r.get("Reported EPS", np.nan))
+                    if np.isfinite(est) and np.isfinite(rep) and abs(est) > 1e-12:
+                        surprises.append((rep - est) / abs(est))
+                if surprises:
+                    surprise_mean = float(np.mean(surprises))
+                    surprise_std = float(np.std(surprises, ddof=0))
+        except Exception:
+            pass
+
+        llm_fb = {
+            "pre_earnings_bias": 0.0,
+            "surprise_probability": 0.5,
+            "surprise_direction": "inline",
+            "confidence": 0.0,
+            "recommended_position_size_scalar": 1.0,
+        }
+        llm_data = _safe_llm_json(
+            (
+                f"Company {ticker}: days to next earnings={days_to_earnings}, "
+                f"historical EPS surprise mean={surprise_mean:.2%}, std={surprise_std:.2%}. "
+                "Return JSON: {'pre_earnings_bias': float -1 to 1, 'surprise_probability': float 0-1, "
+                "'surprise_direction': 'beat|miss|inline', 'confidence': float 0-1, "
+                "'recommended_position_size_scalar': float 0.5-1.5}"
+            ),
+            llm_fb,
+        )
+        sig = float(max(-1.0, min(1.0, llm_data.get("pre_earnings_bias", 0.0))))
+        conf = float(max(0.0, min(1.0, llm_data.get("confidence", 0.0))))
+        earnings_signal = float(sig * max(0.5, conf))
+        return {
+            "earnings_signal": earnings_signal,
+            "days_to_earnings": days_to_earnings,
+            "llm_forecast": llm_data,
+        }
+    except Exception:
+        return fallback
+
+
+def get_macro_alpha(macro_snapshot: dict) -> dict:
+    fallback = {
+        "macro_signal": 0.0,
+        "sector_tilts": {},
+        "macro_regime": "unknown",
+        "yield_curve_slope": 0.0,
+    }
+    try:
+        vix = float(macro_snapshot.get("vix", 20.0))
+        y10 = float(macro_snapshot.get("yield_10y", 0.04))
+        y2 = float(macro_snapshot.get("yield_2y", 0.05))
+        dxy = float(macro_snapshot.get("dxy", 103.0))
+        slope = float(y10 - y2)
+        if vix < 15:
+            vix_regime = "low"
+        elif vix < 20:
+            vix_regime = "normal"
+        elif vix <= 30:
+            vix_regime = "high"
+        else:
+            vix_regime = "extreme"
+
+        llm_fb = {
+            "risk_appetite": 0.0,
+            "equity_headwind": 0.0,
+            "sector_rotation_signal": {"defensive": 0.0, "cyclical": 0.0, "growth": 0.0, "value": 0.0},
+            "macro_regime": "unknown",
+        }
+        llm_data = _safe_llm_json(
+            (
+                f"Macro: VIX={vix} ({vix_regime}), yield curve={slope:.2%}, DXY={dxy}. "
+                "Return JSON: {'risk_appetite': float -1 to 1, 'equity_headwind': float -1 to 1, "
+                "'sector_rotation_signal': {'defensive': float, 'cyclical': float, 'growth': float, 'value': float}, "
+                "'macro_regime': 'goldilocks|stagflation|recession|recovery|overheating'}"
+            ),
+            llm_fb,
+        )
+        risk_appetite = float(max(-1.0, min(1.0, llm_data.get("risk_appetite", 0.0))))
+        headwind = float(max(-1.0, min(1.0, llm_data.get("equity_headwind", 0.0))))
+        macro_signal = float(0.6 * risk_appetite - 0.4 * headwind)
+        return {
+            "macro_signal": macro_signal,
+            "sector_tilts": dict(llm_data.get("sector_rotation_signal", {})),
+            "macro_regime": str(llm_data.get("macro_regime", "unknown")),
+            "yield_curve_slope": slope,
+        }
+    except Exception:
+        return fallback
+
+
+def combine_advanced_alpha(ticker: str, prices_df: pd.DataFrame, macro_snapshot: dict) -> dict:
+    logger = logging.getLogger(__name__)
+    opt_fallback = {"options_signal": 0.0, "atm_iv": 0.2, "skew": 0.0, "llm_interpretation": {}}
+    earn_fallback = {"earnings_signal": 0.0, "days_to_earnings": None, "llm_forecast": {}}
+    macro_fallback = {"macro_signal": 0.0, "sector_tilts": {}, "macro_regime": "unknown", "yield_curve_slope": 0.0}
+
+    try:
+        options_result = get_options_alpha(ticker, prices_df)
+    except Exception as e:
+        logger.warning("options alpha failed for %s: %s", ticker, e)
+        options_result = dict(opt_fallback)
+
+    try:
+        earnings_result = get_earnings_alpha(ticker)
+    except Exception as e:
+        logger.warning("earnings alpha failed for %s: %s", ticker, e)
+        earnings_result = dict(earn_fallback)
+
+    try:
+        macro_result = get_macro_alpha(macro_snapshot)
+    except Exception as e:
+        logger.warning("macro alpha failed for %s: %s", ticker, e)
+        macro_result = dict(macro_fallback)
+
+    if BayesianSignalAggregator is not None:
+        agg = BayesianSignalAggregator(["options", "earnings", "macro"])
+        agg.update_signal("options", float(options_result.get("options_signal", 0.0)), std=0.3)
+        agg.update_signal("earnings", float(earnings_result.get("earnings_signal", 0.0)), std=0.4)
+        agg.update_signal("macro", float(macro_result.get("macro_signal", 0.0)), std=0.2)
+        combined = agg.get_combined_signal()
+    else:
+        vals = [
+            float(options_result.get("options_signal", 0.0)),
+            float(earnings_result.get("earnings_signal", 0.0)),
+            float(macro_result.get("macro_signal", 0.0)),
+        ]
+        combined = {"combined": float(np.mean(vals)), "uncertainty": 1.0}
+
+    return {
+        "combined_alpha": float(combined.get("combined", 0.0)),
+        "uncertainty": float(combined.get("uncertainty", 1.0)),
+        "breakdown": {
+            "options": float(options_result.get("options_signal", 0.0)),
+            "earnings": float(earnings_result.get("earnings_signal", 0.0)),
+            "macro": float(macro_result.get("macro_signal", 0.0)),
+        },
+        "macro_regime": str(macro_result.get("macro_regime", "unknown")),
+        "days_to_earnings": earnings_result.get("days_to_earnings", None),
+    }
