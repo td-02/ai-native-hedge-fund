@@ -30,11 +30,13 @@ agent:
 
 strategies:
   weights:
-    trend_following: 0.30
-    mean_reversion: 0.20
-    volatility_carry: 0.15
-    regime_switching: 0.20
-    event_driven: 0.15
+    trend_following: 0.24
+    mean_reversion: 0.12
+    volatility_carry: 0.10
+    regime_switching: 0.16
+    event_driven: 0.08
+    relative_strength_rotation: 0.00
+    dual_momentum_gate: 0.00
 
 alpha_pipeline:
   blend_weight: 0.0
@@ -91,18 +93,24 @@ regime_controls:
       volatility_carry: 0.05
       regime_switching: 0.25
       event_driven: 0.10
+      relative_strength_rotation: 0.00
+      dual_momentum_gate: 0.00
     meanrev:
       trend_following: 0.20
       mean_reversion: 0.35
       volatility_carry: 0.20
       regime_switching: 0.20
       event_driven: 0.05
+      relative_strength_rotation: 0.00
+      dual_momentum_gate: 0.00
     stress:
       trend_following: 0.05
       mean_reversion: 0.20
       volatility_carry: 0.40
       regime_switching: 0.30
       event_driven: 0.05
+      relative_strength_rotation: 0.00
+      dual_momentum_gate: 0.00
 
 risk_hard_limits:
   max_weight: 0.30

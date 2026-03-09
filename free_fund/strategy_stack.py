@@ -68,6 +68,40 @@ class StrategyEnsembleAgent:
                 data[symbol] = rs.sentiment * rs.confidence
         return _zscore(pd.Series(data, dtype=float))
 
+    def _relative_strength_rotation(self, window: pd.DataFrame, top_n: int = 2, bottom_n: int = 1) -> pd.Series:
+        # Cross-sectional rotation: overweight top momentum names, underweight weakest.
+        mom = 0.6 * window.pct_change(63).iloc[-1] + 0.4 * window.pct_change(126).iloc[-1]
+        mom = mom.reindex(window.columns).fillna(0.0)
+        out = pd.Series(0.0, index=window.columns, dtype=float)
+        if len(out) == 0:
+            return out
+        tn = max(1, min(int(top_n), len(out)))
+        bn = max(0, min(int(bottom_n), len(out) - tn))
+        top_idx = mom.nlargest(tn).index
+        out.loc[top_idx] = 1.0
+        if bn > 0:
+            bot_idx = mom.nsmallest(bn).index
+            out.loc[bot_idx] = -0.5
+        return _zscore(out)
+
+    def _dual_momentum_gate(self, window: pd.DataFrame) -> pd.Series:
+        # Absolute + relative momentum with defensive fallback.
+        symbols = list(window.columns)
+        r126 = window.pct_change(126).iloc[-1].reindex(symbols).fillna(0.0)
+        r21 = window.pct_change(21).iloc[-1].reindex(symbols).fillna(0.0)
+        rel = _zscore(0.7 * r126 + 0.3 * r21)
+        gate = (r126 > 0).astype(float)
+        score = rel * gate
+        if float(score.abs().sum()) <= 1e-12:
+            # Risk-off fallback: prefer defensive assets if present.
+            defensive = [s for s in symbols if s in ("TLT", "GLD", "IEF", "SHY", "BIL")]
+            score = pd.Series(0.0, index=symbols, dtype=float)
+            if defensive:
+                w = 1.0 / len(defensive)
+                for s in defensive:
+                    score.loc[s] = w
+        return _zscore(score)
+
     def run(self, window: pd.DataFrame, research: dict[str, ResearchSignal]) -> dict[str, pd.Series]:
         symbols = list(window.columns)
         trend = self._trend(window)
@@ -75,6 +109,8 @@ class StrategyEnsembleAgent:
         vol_carry = self._vol_carry(window)
         regime = self._regime_switch(window, trend, mean_rev)
         event = self._event_driven(symbols, research)
+        rotation = self._relative_strength_rotation(window)
+        dual_momentum = self._dual_momentum_gate(window)
         if float(event.abs().sum()) <= 1e-12:
             # Deterministic fallback when no high-confidence research is present.
             accel = (window.pct_change(5).iloc[-1] - window.pct_change(20).iloc[-1]).reindex(symbols).fillna(0.0)
@@ -86,6 +122,8 @@ class StrategyEnsembleAgent:
             "volatility_carry": vol_carry,
             "regime_switching": regime,
             "event_driven": event,
+            "relative_strength_rotation": rotation,
+            "dual_momentum_gate": dual_momentum,
         }
         return {name: series.reindex(symbols).fillna(0.0) for name, series in outputs.items()}
 

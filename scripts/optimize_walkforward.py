@@ -113,14 +113,14 @@ def _candidate_configs(base: dict, kept_signals: list[str]) -> list[dict]:
     alpha_weight_grid = [0.0] if not kept_signals else [0.05, 0.10]
     regime_presets = {
         "trend_bias": {
-            "trend": {"trend_following": 0.50, "mean_reversion": 0.10, "volatility_carry": 0.10, "regime_switching": 0.20, "event_driven": 0.10},
-            "meanrev": {"trend_following": 0.15, "mean_reversion": 0.35, "volatility_carry": 0.25, "regime_switching": 0.20, "event_driven": 0.05},
-            "stress": {"trend_following": 0.10, "mean_reversion": 0.20, "volatility_carry": 0.35, "regime_switching": 0.30, "event_driven": 0.05},
+            "trend": {"trend_following": 0.36, "mean_reversion": 0.05, "volatility_carry": 0.06, "regime_switching": 0.16, "event_driven": 0.05, "relative_strength_rotation": 0.20, "dual_momentum_gate": 0.12},
+            "meanrev": {"trend_following": 0.14, "mean_reversion": 0.30, "volatility_carry": 0.18, "regime_switching": 0.16, "event_driven": 0.04, "relative_strength_rotation": 0.10, "dual_momentum_gate": 0.08},
+            "stress": {"trend_following": 0.05, "mean_reversion": 0.15, "volatility_carry": 0.30, "regime_switching": 0.20, "event_driven": 0.03, "relative_strength_rotation": 0.07, "dual_momentum_gate": 0.20},
         },
         "meanrev_bias": {
-            "trend": {"trend_following": 0.30, "mean_reversion": 0.25, "volatility_carry": 0.15, "regime_switching": 0.20, "event_driven": 0.10},
-            "meanrev": {"trend_following": 0.10, "mean_reversion": 0.45, "volatility_carry": 0.25, "regime_switching": 0.15, "event_driven": 0.05},
-            "stress": {"trend_following": 0.10, "mean_reversion": 0.25, "volatility_carry": 0.35, "regime_switching": 0.25, "event_driven": 0.05},
+            "trend": {"trend_following": 0.28, "mean_reversion": 0.20, "volatility_carry": 0.10, "regime_switching": 0.16, "event_driven": 0.06, "relative_strength_rotation": 0.12, "dual_momentum_gate": 0.08},
+            "meanrev": {"trend_following": 0.10, "mean_reversion": 0.38, "volatility_carry": 0.20, "regime_switching": 0.14, "event_driven": 0.04, "relative_strength_rotation": 0.08, "dual_momentum_gate": 0.06},
+            "stress": {"trend_following": 0.05, "mean_reversion": 0.20, "volatility_carry": 0.30, "regime_switching": 0.20, "event_driven": 0.03, "relative_strength_rotation": 0.06, "dual_momentum_gate": 0.16},
         },
         "balanced": copy.deepcopy(base.get("regime_controls", {}).get("strategy_weights_by_regime", {})),
     }
