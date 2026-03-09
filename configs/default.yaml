@@ -87,34 +87,34 @@ benchmark:
   alpha_weight: 0.20
 
 fund_manager:
-  turnover_penalty: 1.20
-  risk_penalty_scale: 0.50
-  top_k: 3
+  turnover_penalty: 0.70
+  risk_penalty_scale: 0.30
+  top_k: 2
 
 regime_controls:
   defensive_assets: [TLT, GLD]
-  defensive_tilt: 0.10
+  defensive_tilt: 0.06
   gross_limit_by_regime:
     trend: 1.00
-    meanrev: 0.80
-    stress: 0.40
+    meanrev: 0.90
+    stress: 0.60
   strategy_weights_by_regime:
     trend:
-      trend_following: 0.45
-      mean_reversion: 0.10
-      volatility_carry: 0.10
+      trend_following: 0.55
+      mean_reversion: 0.05
+      volatility_carry: 0.05
       regime_switching: 0.25
       event_driven: 0.10
     meanrev:
-      trend_following: 0.15
+      trend_following: 0.20
       mean_reversion: 0.35
-      volatility_carry: 0.25
+      volatility_carry: 0.20
       regime_switching: 0.20
       event_driven: 0.05
     stress:
-      trend_following: 0.10
+      trend_following: 0.05
       mean_reversion: 0.20
-      volatility_carry: 0.35
+      volatility_carry: 0.40
       regime_switching: 0.30
       event_driven: 0.05
 

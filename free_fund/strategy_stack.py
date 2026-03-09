@@ -22,32 +22,47 @@ class StrategyEnsembleAgent:
     dynamic_smoothing: float = 0.30
 
     def _trend(self, window: pd.DataFrame) -> pd.Series:
-        r63 = window.pct_change(63).iloc[-1]
-        ma20 = window.rolling(20).mean().iloc[-1]
-        ma100 = window.rolling(100).mean().iloc[-1]
-        trend = (ma20 > ma100).astype(float) * 2 - 1
-        return _zscore(0.7 * r63 + 0.3 * trend)
+        # Dual momentum: combine medium/long momentum with absolute trend filter.
+        r21 = window.pct_change(21).iloc[-1]
+        r126 = window.pct_change(126).iloc[-1]
+        ma50 = window.rolling(50).mean().iloc[-1]
+        ma200 = window.rolling(200).mean().iloc[-1]
+        abs_trend = (ma50 > ma200).astype(float) * 2 - 1
+        score = 0.45 * r21 + 0.40 * r126 + 0.15 * abs_trend
+        return _zscore(score)
 
     def _mean_reversion(self, window: pd.DataFrame) -> pd.Series:
-        r5 = window.pct_change(5).iloc[-1]
-        return _zscore(-r5)
+        # Mean-reversion from short-term overshoot against 20D moving average.
+        px = window.iloc[-1]
+        ma20 = window.rolling(20).mean().iloc[-1].replace(0, np.nan)
+        dist = (px / ma20 - 1.0).fillna(0.0)
+        r3 = window.pct_change(3).iloc[-1]
+        return _zscore(-0.7 * dist - 0.3 * r3)
 
     def _vol_carry(self, window: pd.DataFrame) -> pd.Series:
-        vol = window.pct_change().dropna().std(ddof=0)
-        inv_vol = 1.0 / vol.clip(lower=1e-4)
-        return _zscore(inv_vol)
+        # Prefer low vol assets only if they are not in strong downtrends.
+        rets = window.pct_change().dropna()
+        vol20 = rets.tail(20).std(ddof=0).clip(lower=1e-4)
+        inv_vol = 1.0 / vol20
+        trend63 = window.pct_change(63).iloc[-1]
+        score = inv_vol * (0.5 + 0.5 * np.sign(trend63))
+        return _zscore(score)
 
     def _regime_switch(self, window: pd.DataFrame, trend: pd.Series, mean_rev: pd.Series) -> pd.Series:
-        market_proxy = window.mean(axis=1)
+        market_proxy = window.mean(axis=1).dropna()
+        if len(market_proxy) < 64:
+            return trend
         regime_score = float(market_proxy.pct_change(63).iloc[-1])
-        risk_on = regime_score > 0
+        drawdown = float((market_proxy / market_proxy.cummax() - 1.0).iloc[-1])
+        breadth = float((window.pct_change(63).iloc[-1] > 0).mean())
+        risk_on = regime_score > 0 and drawdown > -0.08 and breadth >= 0.5
         return trend if risk_on else mean_rev
 
     def _event_driven(self, symbols: list[str], research: dict[str, ResearchSignal]) -> pd.Series:
         data: dict[str, float] = {}
         for symbol in symbols:
             rs = research.get(symbol)
-            if rs is None:
+            if rs is None or rs.confidence <= 0.15:
                 data[symbol] = 0.0
             else:
                 data[symbol] = rs.sentiment * rs.confidence
@@ -60,6 +75,10 @@ class StrategyEnsembleAgent:
         vol_carry = self._vol_carry(window)
         regime = self._regime_switch(window, trend, mean_rev)
         event = self._event_driven(symbols, research)
+        if float(event.abs().sum()) <= 1e-12:
+            # Deterministic fallback when no high-confidence research is present.
+            accel = (window.pct_change(5).iloc[-1] - window.pct_change(20).iloc[-1]).reindex(symbols).fillna(0.0)
+            event = _zscore(accel)
 
         outputs = {
             "trend_following": trend,
