@@ -1,4 +1,12 @@
 windows: 0
 best_candidate: fallback_full_range
 avg_test_excess_cagr: 0.0
-avg_test_excess_sharpe: -3.271905817724743
+avg_test_excess_sharpe: -9.647755147465162
+kept_signals: []
+dropped_signals:
+- earnings_momentum
+- analyst_revisions
+- options_iv_term_structure
+- volume_liquidity_shock
+- short_interest
+- block_deals

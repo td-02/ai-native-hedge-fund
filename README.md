@@ -103,6 +103,7 @@ Walk-forward auto-tuning (writes `configs/tuned_walkforward.yaml`):
 ```bash
 python scripts/optimize_walkforward.py --config configs/backtest_fast.yaml --from-date 2020-01-01 --to-date 2026-03-01 --step-days 5
 ```
+This optimizer now scores each alpha signal out-of-sample, automatically drops negative contributors, and then tunes allocation/regime parameters on the remaining signal set.
 
 ## Health Check
 ```bash

@@ -1,0 +1,7 @@
+signal,windows,avg_excess_sharpe,avg_excess_cagr
+earnings_momentum,0.0,-1000000000.0,-1000000000.0
+analyst_revisions,0.0,-1000000000.0,-1000000000.0
+options_iv_term_structure,0.0,-1000000000.0,-1000000000.0
+volume_liquidity_shock,0.0,-1000000000.0,-1000000000.0
+short_interest,0.0,-1000000000.0,-1000000000.0
+block_deals,0.0,-1000000000.0,-1000000000.0

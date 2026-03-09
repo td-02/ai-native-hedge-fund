@@ -17,6 +17,15 @@ if str(PROJECT_ROOT) not in sys.path:
 from backtest_orchestrator_stack import run_orchestrator_backtest
 from free_fund.config import load_config
 
+DEFAULT_ALPHA_SIGNALS = [
+    "earnings_momentum",
+    "analyst_revisions",
+    "options_iv_term_structure",
+    "volume_liquidity_shock",
+    "short_interest",
+    "block_deals",
+]
+
 
 def _metrics(returns: pd.Series) -> dict[str, float]:
     returns = returns.dropna()
@@ -50,11 +59,58 @@ def _benchmark_returns(index: pd.DatetimeIndex, symbols: list[str], mode: str, s
     return series.pct_change().fillna(0.0)
 
 
-def _candidate_configs(base: dict) -> list[dict]:
+def _evaluate_single_signal_oos(
+    base: dict,
+    signal: str,
+    windows: list[tuple[str, str, str, str]],
+    step_days: int,
+    max_cycles: int,
+) -> dict[str, float]:
+    rows: list[dict[str, float]] = []
+    for _, _, te_s, te_e in windows:
+        cfg = copy.deepcopy(base)
+        cfg.setdefault("alpha_pipeline", {})
+        cfg["alpha_pipeline"]["blend_weight"] = 0.10
+        cfg["alpha_pipeline"]["enabled_signals"] = [signal]
+        try:
+            _, _, net, _, _ = run_orchestrator_backtest(
+                cfg=cfg,
+                start_date=te_s,
+                end_date=te_e,
+                step_days=step_days,
+                max_cycles=max_cycles,
+                use_prices_override=True,
+            )
+        except Exception:
+            continue
+        if net.empty:
+            continue
+        bench = _benchmark_returns(
+            net.index,
+            symbols=list(cfg["portfolio"]["symbols"]),
+            mode=str(cfg.get("benchmark", {}).get("mode", "symbol")),
+            symbol=str(cfg.get("benchmark", {}).get("symbol", "SPY")),
+        )
+        ex = _metrics(net - bench.reindex(net.index).fillna(0.0))
+        if ex:
+            rows.append({"excess_sharpe": float(ex["sharpe"]), "excess_cagr": float(ex["cagr"])})
+    if not rows:
+        return {"signal": signal, "windows": 0.0, "avg_excess_sharpe": -1e9, "avg_excess_cagr": -1e9}
+    df = pd.DataFrame(rows)
+    return {
+        "signal": signal,
+        "windows": float(len(df)),
+        "avg_excess_sharpe": float(df["excess_sharpe"].mean()),
+        "avg_excess_cagr": float(df["excess_cagr"].mean()),
+    }
+
+
+def _candidate_configs(base: dict, kept_signals: list[str]) -> list[dict]:
     candidates: list[dict] = []
     turnover_grid = [0.8, 1.2, 1.8]
     risk_grid = [0.3, 0.5, 0.8]
     topk_grid = [2, 3, 4]
+    alpha_weight_grid = [0.0] if not kept_signals else [0.05, 0.10]
     regime_presets = {
         "trend_bias": {
             "trend": {"trend_following": 0.50, "mean_reversion": 0.10, "volatility_carry": 0.10, "regime_switching": 0.20, "event_driven": 0.10},
@@ -69,20 +125,42 @@ def _candidate_configs(base: dict) -> list[dict]:
         "balanced": copy.deepcopy(base.get("regime_controls", {}).get("strategy_weights_by_regime", {})),
     }
 
+    signal_masks: list[list[str]] = [[]]
+    if kept_signals:
+        signal_masks.append(kept_signals)
+        for s in kept_signals:
+            signal_masks.append([s])
+        if len(kept_signals) >= 2:
+            signal_masks.append(kept_signals[:2])
+
+    seen: set[str] = set()
     for name, preset in regime_presets.items():
         for tp in turnover_grid:
             for rp in risk_grid:
                 for topk in topk_grid:
-                    c = copy.deepcopy(base)
-                    c.setdefault("fund_manager", {})
-                    c["fund_manager"]["turnover_penalty"] = tp
-                    c["fund_manager"]["risk_penalty_scale"] = rp
-                    c["fund_manager"]["top_k"] = topk
-                    c.setdefault("regime_controls", {})
-                    c["regime_controls"]["strategy_weights_by_regime"] = preset
-                    c.setdefault("meta", {})
-                    c["meta"]["candidate_name"] = f"{name}_tp{tp}_rp{rp}_k{topk}"
-                    candidates.append(c)
+                    for aw in alpha_weight_grid:
+                        for mask in signal_masks:
+                            c = copy.deepcopy(base)
+                            c.setdefault("fund_manager", {})
+                            c["fund_manager"]["turnover_penalty"] = tp
+                            c["fund_manager"]["risk_penalty_scale"] = rp
+                            c["fund_manager"]["top_k"] = topk
+                            c.setdefault("regime_controls", {})
+                            c["regime_controls"]["strategy_weights_by_regime"] = preset
+                            c.setdefault("alpha_pipeline", {})
+                            c["alpha_pipeline"]["blend_weight"] = float(aw)
+                            c["alpha_pipeline"]["enabled_signals"] = list(mask)
+                            if aw <= 0 or not mask:
+                                c["alpha_pipeline"]["blend_weight"] = 0.0
+                                c["alpha_pipeline"]["enabled_signals"] = []
+                            sig_tag = "none" if not c["alpha_pipeline"]["enabled_signals"] else "-".join(c["alpha_pipeline"]["enabled_signals"])
+                            key = f"{name}_tp{tp}_rp{rp}_k{topk}_aw{c['alpha_pipeline']['blend_weight']}_{sig_tag}"
+                            if key in seen:
+                                continue
+                            seen.add(key)
+                            c.setdefault("meta", {})
+                            c["meta"]["candidate_name"] = key
+                            candidates.append(c)
     return candidates
 
 
@@ -126,6 +204,7 @@ def main() -> None:
     parser.add_argument("--test-months", type=int, default=4)
     parser.add_argument("--window-step-months", type=int, default=4)
     parser.add_argument("--max-candidates", type=int, default=0, help="0 = use full candidate grid")
+    parser.add_argument("--signal-min-excess-sharpe", type=float, default=0.0)
     parser.add_argument("--out", default="outputs/walkforward")
     parser.add_argument("--write-config", default="configs/tuned_walkforward.yaml")
     args = parser.parse_args()
@@ -144,7 +223,22 @@ def main() -> None:
     if not windows:
         raise ValueError("No walk-forward windows generated. Expand date range.")
 
-    candidates = _candidate_configs(base)
+    signal_universe = list(base.get("alpha_pipeline", {}).get("enabled_signals", []) or DEFAULT_ALPHA_SIGNALS)
+    signal_rows: list[dict[str, float | str]] = []
+    kept_signals: list[str] = []
+    for signal in signal_universe:
+        r = _evaluate_single_signal_oos(
+            base=base,
+            signal=signal,
+            windows=windows,
+            step_days=args.step_days,
+            max_cycles=args.max_cycles,
+        )
+        signal_rows.append(r)
+        if float(r.get("avg_excess_sharpe", -1e9)) > float(args.signal_min_excess_sharpe):
+            kept_signals.append(signal)
+
+    candidates = _candidate_configs(base, kept_signals=kept_signals)
     if args.max_candidates > 0:
         candidates = candidates[: args.max_candidates]
     rows: list[dict[str, float | str | int]] = []
@@ -223,6 +317,11 @@ def main() -> None:
 
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
+    if signal_rows:
+        pd.DataFrame(signal_rows).sort_values("avg_excess_sharpe", ascending=False).to_csv(
+            out_dir / "signal_contribution.csv",
+            index=False,
+        )
     df = pd.DataFrame(rows)
     df.to_csv(out_dir / "walkforward_results.csv", index=False)
     if df.empty:
@@ -258,7 +357,14 @@ def main() -> None:
         selected.pop("meta", None)
         with Path(args.write_config).open("w", encoding="utf-8") as f:
             yaml.safe_dump(selected, f, sort_keys=False)
-        summary = {"windows": 0, "best_candidate": "fallback_full_range", "avg_test_excess_cagr": 0.0, "avg_test_excess_sharpe": best_score}
+        summary = {
+            "windows": 0,
+            "best_candidate": "fallback_full_range",
+            "avg_test_excess_cagr": 0.0,
+            "avg_test_excess_sharpe": best_score,
+            "kept_signals": kept_signals,
+            "dropped_signals": [s for s in signal_universe if s not in kept_signals],
+        }
         with (out_dir / "summary.yaml").open("w", encoding="utf-8") as f:
             yaml.safe_dump(summary, f, sort_keys=False)
         print("Walk-forward fallback selection complete.")
@@ -282,6 +388,8 @@ def main() -> None:
         "best_candidate": best_name,
         "avg_test_excess_cagr": float(df["test_excess_cagr"].mean()),
         "avg_test_excess_sharpe": float(df["test_excess_sharpe"].mean()),
+        "kept_signals": kept_signals,
+        "dropped_signals": [s for s in signal_universe if s not in kept_signals],
     }
     with (out_dir / "summary.yaml").open("w", encoding="utf-8") as f:
         yaml.safe_dump(summary, f, sort_keys=False)
