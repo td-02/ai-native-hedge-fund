@@ -483,6 +483,7 @@ class CentralizedHedgeFundSystem:
             risk_penalty=self._zscore_series(risk_penalty) * risk_penalty_scale,
             turnover_penalty=turnover_penalty,
             gross_limit_override=(float(gross_override) if gross_override is not None else None),
+            top_k=int(fm_cfg.get("top_k", 0)) if int(fm_cfg.get("top_k", 0)) > 0 else None,
         )
         if regime_snapshot.regime == "stress":
             defensive_assets = regime_cfg.get("defensive_assets", ["TLT", "GLD"])

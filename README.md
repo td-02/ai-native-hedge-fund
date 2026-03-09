@@ -99,6 +99,11 @@ Fast ablation:
 python scripts/run_ablation.py --config configs/backtest_fast.yaml --fast-mode --from-date 2020-01-01 --to-date 2026-03-01 --step-days 5 --max-cycles 40
 ```
 
+Walk-forward auto-tuning (writes `configs/tuned_walkforward.yaml`):
+```bash
+python scripts/optimize_walkforward.py --config configs/backtest_fast.yaml --from-date 2020-01-01 --to-date 2026-03-01 --step-days 5
+```
+
 ## Health Check
 ```bash
 python scripts/healthcheck.py

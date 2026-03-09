@@ -75,6 +75,7 @@ benchmark:
 fund_manager:
   turnover_penalty: 1.20
   risk_penalty_scale: 0.50
+  top_k: 3
 
 regime_controls:
   defensive_assets: [TLT, GLD]

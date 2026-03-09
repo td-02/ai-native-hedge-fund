@@ -139,11 +139,16 @@ class FundManagerAgent:
         risk_penalty: pd.Series | None = None,
         turnover_penalty: float = 0.0,
         gross_limit_override: float | None = None,
+        top_k: int | None = None,
     ) -> pd.Series:
         score = combined_score.fillna(0.0).copy()
         if risk_penalty is not None:
             rp = risk_penalty.reindex(score.index).fillna(float(risk_penalty.mean()) if len(risk_penalty) else 0.0)
             score = score - rp
+
+        if top_k is not None and top_k > 0 and top_k < len(score):
+            keep = score.abs().nlargest(top_k).index
+            score = score.where(score.index.isin(keep), 0.0)
 
         gross = float(score.abs().sum())
         if gross <= 1e-12:

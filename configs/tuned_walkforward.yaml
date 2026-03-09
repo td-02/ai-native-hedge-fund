@@ -1,23 +1,24 @@
 system:
   output_dir: outputs
-
 portfolio:
-  symbols: [SPY, QQQ, IWM, TLT, GLD]
+  symbols:
+  - SPY
+  - QQQ
+  - IWM
+  - TLT
+  - GLD
   start_date: '2020-01-01'
   end_date: null
   lookback_days: 126
-  max_weight: 0.30
-  gross_limit: 1.00
+  max_weight: 0.3
+  gross_limit: 1.0
   rebalance_every_n_days: 5
-
 costs:
   transaction_cost_bps: 5
   slippage_bps: 2
-
 risk:
   target_annual_vol: 0.15
-  min_annual_vol_floor: 0.10
-
+  min_annual_vol_floor: 0.1
 agent:
   enable_ollama_overlay: false
   enable_llm_research: false
@@ -27,133 +28,117 @@ agent:
   max_news_age_minutes: 15
   max_retries: 1
   retry_base_delay_sec: 0.2
-
 strategies:
   weights:
-    trend_following: 0.30
-    mean_reversion: 0.20
+    trend_following: 0.3
+    mean_reversion: 0.2
     volatility_carry: 0.15
-    regime_switching: 0.20
+    regime_switching: 0.2
     event_driven: 0.15
-
 alpha_pipeline:
   blend_weight: 0.0
-
 arbitrage:
-  blend_weight: 0.10
-
+  blend_weight: 0.1
 microstructure:
   blend_weight: 0.05
   enabled: true
-
 research_council:
   enabled: false
   blend_weight: 0.0
   max_rounds: 1
   request_timeout_sec: 3
-
 learning:
   enabled: true
   decay: 0.95
   min_weight: 0.05
   dynamic_min_weight: 0.05
   dynamic_max_weight: 0.45
-  dynamic_smoothing: 0.30
+  dynamic_smoothing: 0.3
   quality_eval_days: 60
-
 execution_controls:
   min_weight_change_to_trade: 0.02
-  max_turnover_per_cycle: 0.40
+  max_turnover_per_cycle: 0.4
   rebalance_cooldown_cycles: 1
-
 private_alpha:
   blend_weight: 0.0
-
 benchmark:
   mode: symbol
   symbol: SPY
-  alpha_weight: 0.20
-
+  alpha_weight: 0.2
 fund_manager:
-  turnover_penalty: 1.20
-  risk_penalty_scale: 0.50
+  turnover_penalty: 0.8
+  risk_penalty_scale: 0.3
   top_k: 3
-
 regime_controls:
-  defensive_assets: [TLT, GLD]
-  defensive_tilt: 0.10
+  defensive_assets:
+  - TLT
+  - GLD
+  defensive_tilt: 0.1
   gross_limit_by_regime:
-    trend: 1.00
-    meanrev: 0.80
-    stress: 0.40
+    trend: 1.0
+    meanrev: 0.8
+    stress: 0.4
   strategy_weights_by_regime:
     trend:
-      trend_following: 0.45
-      mean_reversion: 0.10
-      volatility_carry: 0.10
-      regime_switching: 0.25
-      event_driven: 0.10
+      trend_following: 0.5
+      mean_reversion: 0.1
+      volatility_carry: 0.1
+      regime_switching: 0.2
+      event_driven: 0.1
     meanrev:
       trend_following: 0.15
       mean_reversion: 0.35
       volatility_carry: 0.25
-      regime_switching: 0.20
+      regime_switching: 0.2
       event_driven: 0.05
     stress:
-      trend_following: 0.10
-      mean_reversion: 0.20
+      trend_following: 0.1
+      mean_reversion: 0.2
       volatility_carry: 0.35
-      regime_switching: 0.30
+      regime_switching: 0.3
       event_driven: 0.05
-
 risk_hard_limits:
-  max_weight: 0.30
-  gross_limit: 1.00
-  net_limit: 0.30
-  max_annual_vol: 0.20
+  max_weight: 0.3
+  gross_limit: 1.0
+  net_limit: 0.3
+  max_annual_vol: 0.2
   drawdown_brake: 0.15
-  brake_scale: 0.50
+  brake_scale: 0.5
   var_limit_95: 0.03
   es_limit_95: 0.04
-  concentration_top1_limit: 0.30
-  concentration_top5_limit: 0.80
-  beta_neutral_band: 0.20
+  concentration_top1_limit: 0.3
+  concentration_top5_limit: 0.8
+  beta_neutral_band: 0.2
   jump_threshold: 0.06
   max_leverage_by_regime:
     trend: 3.0
     meanrev: 2.5
     volatility_carry: 8.0
     stress: 1.0
-
 data_quality:
   max_nan_ratio: 0.01
-  max_abs_daily_return: 0.30
+  max_abs_daily_return: 0.3
   max_zero_price_ratio: 0.0
   max_staleness_minutes: 9999999
-
 resilience:
   failure_threshold: 3
   recovery_timeout_sec: 120
   degraded_mode_enabled: true
-
 health:
   deadman_timeout_sec: 900
-
 alerts:
   enabled: false
   slack_webhook: ''
   thresholds:
     daily_pnl_drift: 0.03
-    strategy_disagreement: 0.70
-
+    strategy_disagreement: 0.7
 tracing:
   enabled: false
-
 backtest:
   fast_mode: true
-
 execution:
   broker: stub
   primary_broker: stub
-  backup_brokers: [stub]
+  backup_brokers:
+  - stub
   market_mode: us
