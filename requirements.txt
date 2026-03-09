@@ -11,3 +11,7 @@ feedparser
 pytest
 tracelm
 mcp
+scipy>=1.11
+hmmlearn>=0.3
+filterpy>=1.4
+aiohttp>=3.9

@@ -180,3 +180,37 @@ execution:
   max_participation_adv: 0.10
   adv_notional_default: 2000000
   market_mode: us
+
+ai_alpha:
+  enabled: false
+  blend_weight: 0.3
+  options_alpha: true
+  earnings_alpha: true
+  macro_alpha: true
+
+bayesian_optimizer:
+  enabled: false
+  blend_weight: 0.25
+  n_uncertainty_samples: 500
+  risk_aversion: 2.5
+  tau: 0.05
+
+llm_router:
+  primary_provider: groq
+  fallback_chain: [groq, gemini, openrouter, ollama]
+  timeout_seconds: 15
+  max_retries: 2
+  log_all_calls: false
+
+probabilistic_core:
+  kalman_process_noise: 0.01
+  kalman_measurement_noise: 0.1
+  hmm_n_regimes: 4
+  bs_risk_free_rate: 0.05
+  heston_mc_paths: 10000
+
+pairs_trading:
+  enabled: false
+  pairs: []
+  zscore_entry_threshold: 2.0
+  zscore_exit_threshold: 0.5

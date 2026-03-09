@@ -158,3 +158,86 @@ class ResearchAgent:
                 source_urls=source_urls[: self.max_headlines],
             )
         return results
+
+
+def get_llm_sentiment(headlines: list[str], ticker: str) -> dict:
+    fallback = {
+        "sentiment_score": 0.0,
+        "confidence": 0.0,
+        "key_catalysts": [],
+        "time_horizon": "short_term",
+        "surprising_factor": 0.0,
+    }
+    try:
+        from llm_router import llm_chat
+
+        prompt = (
+            f"You are a financial analyst. Given these headlines about {ticker}: {headlines}\n"
+            "Return JSON: {\n"
+            "  'sentiment_score': float -1.0 to 1.0,\n"
+            "  'confidence': float 0.0-1.0,\n"
+            "  'key_catalysts': [list of strings max 3],\n"
+            "  'time_horizon': 'intraday|short_term|medium_term',\n"
+            "  'surprising_factor': float 0.0-1.0\n"
+            "}"
+        )
+        raw = llm_chat(prompt=prompt, system="", json_mode=True, timeout=15)
+        data = json.loads(raw) if raw else {}
+        out = {
+            "sentiment_score": float(max(-1.0, min(1.0, data.get("sentiment_score", 0.0)))),
+            "confidence": float(max(0.0, min(1.0, data.get("confidence", 0.0)))),
+            "key_catalysts": [str(x) for x in list(data.get("key_catalysts", []))[:3]],
+            "time_horizon": str(data.get("time_horizon", "short_term")),
+            "surprising_factor": float(max(0.0, min(1.0, data.get("surprising_factor", 0.0)))),
+        }
+        if out["time_horizon"] not in {"intraday", "short_term", "medium_term"}:
+            out["time_horizon"] = "short_term"
+        return out
+    except Exception:
+        return fallback
+
+
+def get_macro_sentiment(macro_data: dict) -> dict:
+    fallback = {
+        "risk_on_score": 0.0,
+        "inflation_concern": 0.5,
+        "recession_risk": 0.5,
+        "dominant_theme": "neutral",
+    }
+    try:
+        from llm_router import llm_chat
+
+        prompt = (
+            "Analyze macro data and return JSON only.\n"
+            f"macro_data={macro_data}\n"
+            "Return JSON: {\n"
+            "  'risk_on_score': float -1 to 1,\n"
+            "  'inflation_concern': float 0 to 1,\n"
+            "  'recession_risk': float 0 to 1,\n"
+            "  'dominant_theme': string\n"
+            "}"
+        )
+        raw = llm_chat(prompt=prompt, system="", json_mode=True, timeout=15)
+        data = json.loads(raw) if raw else {}
+        return {
+            "risk_on_score": float(max(-1.0, min(1.0, data.get("risk_on_score", 0.0)))),
+            "inflation_concern": float(max(0.0, min(1.0, data.get("inflation_concern", 0.5)))),
+            "recession_risk": float(max(0.0, min(1.0, data.get("recession_risk", 0.5)))),
+            "dominant_theme": str(data.get("dominant_theme", "neutral")),
+        }
+    except Exception:
+        return fallback
+
+
+def enrich_signals_with_llm(existing_signals: dict, headlines: list[str]) -> dict:
+    enriched: dict = {}
+    for ticker, value in existing_signals.items():
+        base = float(value)
+        llm = get_llm_sentiment(headlines=headlines, ticker=str(ticker))
+        conf = float(llm.get("confidence", 0.0))
+        if conf > 0.5:
+            final_score = 0.6 * base + 0.4 * float(llm.get("sentiment_score", 0.0))
+            enriched[ticker] = {"signal": float(final_score), "llm_enriched": True}
+        else:
+            enriched[ticker] = {"signal": float(base), "llm_enriched": False}
+    return enriched

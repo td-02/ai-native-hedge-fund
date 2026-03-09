@@ -1,10 +1,71 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 import numpy as np
 import pandas as pd
 
 from .contracts import ResearchSignal
+try:
+    from probabilistic_core import KalmanSignalTracker, BayesianSignalAggregator, BayesianPortfolioOptimizer, var_cvar
+except Exception:  # pragma: no cover - compatibility fallback
+    class KalmanSignalTracker:  # type: ignore
+        def __init__(self, process_noise: float = 0.01, measurement_noise: float = 0.1):
+            self.value = 0.0
+
+        def update(self, measurement: float) -> dict:
+            self.value = float(measurement)
+            return {"filtered_signal": self.value, "signal_velocity": 0.0, "uncertainty": 1.0}
+
+        def reset(self):
+            self.value = 0.0
+
+    class BayesianSignalAggregator:  # type: ignore
+        def __init__(self, signal_names: list):
+            self.signal_names = signal_names
+            self.values = {}
+
+        def update_signal(self, name: str, value: float, std: float):
+            self.values[name] = (value, std)
+
+        def get_combined_signal(self) -> dict:
+            if not self.values:
+                return {"combined": 0.0, "uncertainty": 1.0, "weights": {}, "n_signals": 0}
+            vals = [float(v[0]) for v in self.values.values()]
+            w = 1.0 / len(vals)
+            return {
+                "combined": float(sum(vals) * w),
+                "uncertainty": 1.0,
+                "weights": {k: w for k in self.values},
+                "n_signals": len(vals),
+            }
+
+    class BayesianPortfolioOptimizer:  # type: ignore
+        def __init__(self, risk_aversion: float = 2.5, tau: float = 0.05):
+            self.risk_aversion = risk_aversion
+            self.tau = tau
+
+        def set_market_prior(self, returns_df: pd.DataFrame, market_caps: dict = None):
+            return None
+
+        def add_llm_view(self, view: dict):
+            return None
+
+        def optimize(self) -> dict:
+            return {"weights": {}, "posterior_returns": {}, "posterior_cov": np.zeros((0, 0))}
+
+        def optimize_with_uncertainty(self, n_samples: int = 500) -> dict:
+            return {"mean_weights": {}, "std_weights": {}, "p5_weights": {}, "p95_weights": {}}
+
+    def var_cvar(returns: np.ndarray, confidence: float = 0.95) -> dict:  # type: ignore
+        arr = np.asarray(returns, dtype=float)
+        if arr.size == 0:
+            return {"var": 0.0, "cvar": 0.0, "confidence": confidence}
+        q = float(np.quantile(arr, 1.0 - confidence))
+        tail = arr[arr <= q]
+        return {"var": q, "cvar": float(tail.mean()) if tail.size else q, "confidence": confidence}
+
+from llm_router import llm_chat
 
 
 def _zscore(series: pd.Series) -> pd.Series:
@@ -330,3 +391,192 @@ class RiskManagerAgent:
                     flags.append("beta_neutrality_scaled")
 
         return weights.fillna(0.0), flags
+
+
+class LLMTrendStrategy:
+    def __init__(self, tickers, config):
+        self.tickers = list(tickers or [])
+        self.config = dict(config or {})
+        p_noise = float(self.config.get("kalman_process_noise", 0.01))
+        m_noise = float(self.config.get("kalman_measurement_noise", 0.1))
+        self.trackers = {t: KalmanSignalTracker(process_noise=p_noise, measurement_noise=m_noise) for t in self.tickers}
+
+    def generate_signals(self, prices_df, headlines_by_ticker: dict = None) -> dict:
+        prices = prices_df.copy()
+        out: dict = {}
+        for t in self.tickers:
+            if t not in prices.columns or len(prices[t].dropna()) < 35:
+                out[t] = {"signal": 0.0, "kalman_uncertainty": 1.0, "llm_used": False}
+                continue
+            s = prices[t].astype(float).dropna()
+            ema10 = float(s.ewm(span=10, adjust=False).mean().iloc[-1])
+            ema30 = float(s.ewm(span=30, adjust=False).mean().iloc[-1])
+            raw = (ema10 / max(1e-12, ema30)) - 1.0
+            kal = self.trackers[t].update(raw)
+            filtered = float(kal["filtered_signal"])
+            uncertainty = float(kal["uncertainty"])
+            llm_used = False
+
+            heads = []
+            if headlines_by_ticker and t in headlines_by_ticker:
+                heads = list(headlines_by_ticker.get(t, []))
+            if heads:
+                try:
+                    prompt = (
+                        f"Price trend signal {filtered:.3f} for {t}, headlines: {heads}. "
+                        "Return JSON: {'trend_strength': float -1 to 1, "
+                        "'trend_continuation_prob': float 0-1, 'reversal_risk': 'low|medium|high', "
+                        "'conviction': float 0-1}"
+                    )
+                    data = json.loads(llm_chat(prompt=prompt, system="", json_mode=True, timeout=15))
+                    trend_strength = float(max(-1.0, min(1.0, data.get("trend_strength", filtered))))
+                    conviction = float(max(0.0, min(1.0, data.get("conviction", 0.0))))
+                    filtered = filtered * (1.0 - 0.3 * conviction) + trend_strength * 0.3 * conviction
+                    llm_used = True
+                except Exception:
+                    llm_used = False
+
+            out[t] = {"signal": float(filtered), "kalman_uncertainty": uncertainty, "llm_used": llm_used}
+        return out
+
+
+class LLMPairsTradingStrategy:
+    def __init__(self, pairs: list[tuple], config):
+        self.pairs = list(pairs or [])
+        self.config = dict(config or {})
+
+    def generate_signals(self, prices_df) -> dict:
+        out: dict = {}
+        prices = prices_df.copy()
+        for pair in self.pairs:
+            if len(pair) != 2:
+                continue
+            a, b = pair
+            key = f"{a}_{b}"
+            if a not in prices.columns or b not in prices.columns:
+                out[key] = {"spread_zscore": 0.0, "signal": 0.0, "llm_validated": False}
+                continue
+            pa = prices[a].astype(float).dropna()
+            pb = prices[b].astype(float).dropna()
+            idx = pa.index.intersection(pb.index)
+            if len(idx) < 25:
+                out[key] = {"spread_zscore": 0.0, "signal": 0.0, "llm_validated": False}
+                continue
+            spread = np.log(pa.loc[idx]) - np.log(pb.loc[idx])
+            z = float((spread.iloc[-1] - spread.tail(20).mean()) / max(1e-12, spread.tail(20).std(ddof=0)))
+            base_signal = float(-np.sign(z) * min(1.0, abs(z) / 3.0))
+            llm_validated = False
+            signal = base_signal
+            try:
+                prompt = (
+                    f"Assets {a} and {b}, spread z-score={z:.2f}. "
+                    "Return JSON: {'causal_link_strength': float 0-1, "
+                    "'link_type': 'fundamental|statistical|broken', "
+                    "'trade_signal': float -1 to 1, 'stop_if_zscore_exceeds': float}"
+                )
+                data = json.loads(llm_chat(prompt=prompt, system="", json_mode=True, timeout=15))
+                strength = float(max(0.0, min(1.0, data.get("causal_link_strength", 0.0))))
+                link_type = str(data.get("link_type", "statistical"))
+                trade_signal = float(max(-1.0, min(1.0, data.get("trade_signal", base_signal))))
+                if link_type != "broken" and strength > 0.5:
+                    signal = trade_signal
+                    llm_validated = True
+            except Exception:
+                signal = base_signal
+            out[key] = {"spread_zscore": z, "signal": float(signal), "llm_validated": llm_validated}
+        return out
+
+
+class LLMRegimeSwitchingStrategy:
+    def __init__(self, tickers, config):
+        self.tickers = list(tickers or [])
+        self.config = dict(config or {})
+        from probabilistic_core import RegimeHMM
+
+        self.hmm = RegimeHMM(n_regimes=4)
+
+    def generate_signals(self, prices_df, regime_posterior: dict = None) -> dict:
+        prices = prices_df.copy()
+        if len(prices) < 20:
+            return {t: {"signal": 0.0, "regime_scale": 1.0, "llm_used": False} for t in self.tickers}
+        returns = prices.pct_change().dropna().mean(axis=1)
+        if len(returns) > 60:
+            try:
+                self.hmm.fit(returns.tail(250).to_numpy(dtype=float))
+            except Exception:
+                pass
+        post = regime_posterior or self.hmm.predict_proba(returns.tail(120).to_numpy(dtype=float))
+        vix = float(self.config.get("vix", 20.0))
+        ret = float(returns.tail(20).mean()) if len(returns) >= 20 else 0.0
+        vol = float(returns.tail(20).std(ddof=0)) if len(returns) >= 20 else 0.0
+        gross = 1.0
+        llm_used = False
+        try:
+            prompt = (
+                f"VIX={vix}, recent_return={ret:.2%}, vol={vol:.2%}, model regime={post}. "
+                "Return JSON: {'confirmed_regime': 'bull|bear|crisis|sideways', "
+                "'regime_confidence': float 0-1, 'recommended_gross_exposure': float 0.5-1.5, "
+                "'favored_sectors': [list], 'risk_off_signal': bool}"
+            )
+            data = json.loads(llm_chat(prompt=prompt, system="", json_mode=True, timeout=15))
+            gross = float(max(0.5, min(1.5, data.get("recommended_gross_exposure", 1.0))))
+            llm_used = True
+        except Exception:
+            llm_used = False
+
+        base = prices.pct_change(21).iloc[-1].reindex(self.tickers).fillna(0.0)
+        z = (base - float(base.mean())) / max(1e-12, float(base.std(ddof=0)))
+        z = z.fillna(0.0) * gross
+        return {t: {"signal": float(z.get(t, 0.0)), "regime_scale": gross, "llm_used": llm_used} for t in self.tickers}
+
+
+class AIAlphaComposite:
+    def __init__(self, tickers, pairs, config):
+        self.tickers = list(tickers or [])
+        self.config = dict(config or {})
+        self.trend = LLMTrendStrategy(self.tickers, self.config)
+        self.pairs = LLMPairsTradingStrategy(list(pairs or []), self.config)
+        self.regime = LLMRegimeSwitchingStrategy(self.tickers, self.config)
+        self.bl_optimizer = BayesianPortfolioOptimizer(
+            risk_aversion=float(self.config.get("risk_aversion", 2.5)),
+            tau=float(self.config.get("tau", 0.05)),
+        )
+
+    def generate_signals(self, prices_df, headlines_by_ticker, regime_posterior) -> dict:
+        trend = self.trend.generate_signals(prices_df, headlines_by_ticker=headlines_by_ticker or {})
+        pairs = self.pairs.generate_signals(prices_df)
+        regime = self.regime.generate_signals(prices_df, regime_posterior=regime_posterior or {})
+
+        out: dict = {}
+        for t in self.tickers:
+            agg = BayesianSignalAggregator(signal_names=["trend", "pairs", "regime"])
+            trend_signal = float(trend.get(t, {}).get("signal", 0.0))
+            trend_unc = float(max(1e-6, trend.get(t, {}).get("kalman_uncertainty", 1.0)))
+            agg.update_signal("trend", trend_signal, trend_unc)
+
+            pair_vals = []
+            for k, v in pairs.items():
+                if k.startswith(f"{t}_") or k.endswith(f"_{t}"):
+                    pair_vals.append(float(v.get("signal", 0.0)))
+            pair_signal = float(np.mean(pair_vals)) if pair_vals else 0.0
+            agg.update_signal("pairs", pair_signal, 0.2 if pair_vals else 1.0)
+
+            regime_signal = float(regime.get(t, {}).get("signal", 0.0))
+            regime_scale = float(max(1e-6, regime.get(t, {}).get("regime_scale", 1.0)))
+            agg.update_signal("regime", regime_signal, 0.3 / regime_scale)
+
+            combined = agg.get_combined_signal()
+            out[t] = {
+                "composite_signal": float(combined["combined"]),
+                "uncertainty": float(combined["uncertainty"]),
+                "contributing_strategies": {
+                    "trend": trend.get(t, {}),
+                    "pairs": {"signal": pair_signal},
+                    "regime": regime.get(t, {}),
+                    "weights": combined["weights"],
+                    "tail_risk": var_cvar(prices_df[t].pct_change().dropna().tail(60).to_numpy(dtype=float), confidence=0.95)
+                    if t in prices_df.columns
+                    else {"var": 0.0, "cvar": 0.0, "confidence": 0.95},
+                },
+            }
+        return out
