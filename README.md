@@ -3,13 +3,17 @@
 Centralized multi-agent trading system with deterministic risk/execution logic, LangChain-enabled research, and audit-ready event logs.
 
 ## Architecture
-Data ingest -> Research Agent -> Strategy Ensemble -> Fund Manager -> Risk Manager -> Execution -> Audit Ledger
+Live runtime architecture (`free_fund/orchestrator.py`):
+Data ingest -> Data quality gate -> Research -> Strategy ensemble -> Alpha/arbitrage/private/council overlays -> Regime + benchmark-relative adjustment -> Fund manager -> Risk manager -> Execution controls -> Broker router (optional execute) -> Audit + tracing + heartbeat
+
+AI-native v2 architecture (`scripts/backtest_ai_native_v2.py`, backtest-only):
+Baseline orchestrator weights -> Regime meta-router -> AI forecast + calibration -> Benchmark-relative optimizer -> No-harm guards -> Weight override for evaluation
 
 ## Agents
 - Market/Data: pulls OHLCV from yfinance.
 - Research Agent: RSS headline analysis (deterministic), optional LangChain + local Ollama overlay.
 - Strategy Agents: trend, mean reversion, volatility carry, regime switching, event-driven.
-- Alpha Pipeline Agents: earnings momentum, FII/DII proxy flow, options-flow proxy, short-interest proxy, block-deal proxy.
+- Alpha Pipeline Agents: earnings momentum, analyst revisions, options IV term-structure proxy, volume/liquidity shock, short-interest proxy, block-deal proxy.
 - Cross-Asset Arbitrage Agents: NSE/BSE arb hook, cash-futures basis, ETF NAV arb, ADR arb hook.
 - Macro Intelligence Agents: RBI policy hook, global carry, crude-gold correlation, rupee regime.
 - Research Council (LLM-native): researcher/news/peer/synthesis multi-agent ranking.
@@ -112,6 +116,7 @@ Safety behavior:
 - Deterministic fallback when LLM is unavailable.
 - Objective gate: if risk-adjusted active objective is non-positive, keep baseline weights.
 - Rolling no-harm guard in backtest loop: if recent v2 active return underperforms baseline, fallback to baseline policy.
+- Note: v2 is currently integrated in the comparison backtest script, not yet wired into live `run_cycle`.
 
 Fast ablation:
 ```bash
@@ -193,7 +198,7 @@ To use real Alpaca paper execution in Actions:
 - Free/open-source only. No paid API required.
 - Keep `execution.broker: stub` during testing.
 - For LLM research, set `agent.enable_llm_research: true` and run local Ollama.
-- `configs/default.yaml` is AI-heavy by default (`enable_llm_research: true`, `research_council.enabled: true`).
+- `configs/default.yaml` defaults: `agent.enable_llm_research: true`, `research_council.enabled: false`.
 - `configs/live_stub.yaml` remains safer for free hosted workers without local Ollama.
 
 ## Tests
