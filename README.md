@@ -94,6 +94,25 @@ Fast orchestrator backtest (cached market replay, no RSS/LLM/macro API calls):
 python scripts/backtest_orchestrator_stack.py --config configs/backtest_fast.yaml --fast-mode --from-date 2020-01-01 --to-date 2026-03-01 --step-days 5 --max-cycles 0
 ```
 
+AI-native v2 benchmark-relative comparison (baseline vs v2 vs benchmarks):
+```bash
+python scripts/backtest_ai_native_v2.py --config configs/backtest_fast.yaml --from-date 2020-01-01 --to-date 2026-03-01 --step-days 5 --max-cycles 60 --out outputs/ai_native_v2_compare
+```
+Outputs:
+- `outputs/ai_native_v2_compare/comparison_metrics.csv`
+- `outputs/ai_native_v2_compare/baseline/*`
+- `outputs/ai_native_v2_compare/ai_native_v2/*`
+
+V2 layer components:
+- `free_fund/meta_router.py`: regime-aware strategy routing and gross exposure scaling.
+- `free_fund/ai_forecast_calibration.py`: forecast confidence calibration with deterministic fallback.
+- `free_fund/benchmark_relative_optimizer.py`: benchmark-relative active-weight optimizer with no-harm objective guard.
+
+Safety behavior:
+- Deterministic fallback when LLM is unavailable.
+- Objective gate: if risk-adjusted active objective is non-positive, keep baseline weights.
+- Rolling no-harm guard in backtest loop: if recent v2 active return underperforms baseline, fallback to baseline policy.
+
 Fast ablation:
 ```bash
 python scripts/run_ablation.py --config configs/backtest_fast.yaml --fast-mode --from-date 2020-01-01 --to-date 2026-03-01 --step-days 5 --max-cycles 40
