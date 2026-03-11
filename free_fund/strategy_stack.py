@@ -83,13 +83,23 @@ class StrategyEnsembleAgent:
     dynamic_smoothing: float = 0.30
 
     def _trend(self, window: pd.DataFrame) -> pd.Series:
-        # Dual momentum: combine medium/long momentum with absolute trend filter.
+        # Robust trend: dual-horizon momentum, volatility-scaling, and crash filter.
+        rets = window.pct_change().dropna()
         r21 = window.pct_change(21).iloc[-1]
         r126 = window.pct_change(126).iloc[-1]
         ma50 = window.rolling(50).mean().iloc[-1]
         ma200 = window.rolling(200).mean().iloc[-1]
         abs_trend = (ma50 > ma200).astype(float) * 2 - 1
-        score = 0.45 * r21 + 0.40 * r126 + 0.15 * abs_trend
+        vol63 = rets.tail(63).std(ddof=0).replace(0, np.nan)
+        risk_adj_mom = ((0.6 * r21 + 0.4 * r126) / vol63).replace([np.inf, -np.inf], 0.0).fillna(0.0)
+
+        market_proxy = window.mean(axis=1).dropna()
+        mret = market_proxy.pct_change().dropna()
+        ann_vol = float(mret.tail(63).std(ddof=0) * np.sqrt(252)) if len(mret) >= 20 else 0.0
+        dd = float((market_proxy / market_proxy.cummax() - 1.0).iloc[-1]) if len(market_proxy) > 1 else 0.0
+        crash_scale = 0.5 if (ann_vol > 0.28 or dd < -0.10) else 1.0
+
+        score = crash_scale * (0.45 * risk_adj_mom + 0.35 * r126 + 0.20 * abs_trend)
         return _zscore(score)
 
     def _mean_reversion(self, window: pd.DataFrame) -> pd.Series:

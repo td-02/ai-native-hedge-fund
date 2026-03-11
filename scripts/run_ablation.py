@@ -75,6 +75,22 @@ def main() -> None:
     base.setdefault("backtest", {})
     base["backtest"]["fast_mode"] = bool(args.fast_mode)
     variants: list[tuple[str, dict]] = []
+    alpha_signals = list(
+        base.get("alpha_pipeline", {}).get(
+            "enabled_signals",
+            [
+                "earnings_momentum",
+                "analyst_revisions",
+                "options_iv_term_structure",
+                "volume_liquidity_shock",
+                "short_interest",
+                "block_deals",
+                "quality_profitability",
+                "pead_signal",
+            ],
+        )
+        or []
+    )
 
     variants.append(("full", copy.deepcopy(base)))
 
@@ -107,6 +123,23 @@ def main() -> None:
     v["strategies"]["weights"]["event_driven"] = 0.0
     _renorm_strategy_weights(v)
     variants.append(("no_event_driven", v))
+
+    # Per-signal alpha validation (isolated alpha signal with controlled blend weight).
+    for sig in alpha_signals:
+        v = copy.deepcopy(base)
+        v.setdefault("alpha_pipeline", {})
+        v["alpha_pipeline"]["blend_weight"] = 0.12
+        v["alpha_pipeline"]["enabled_signals"] = [sig]
+        variants.append((f"alpha_only_{sig}", v))
+
+    # Exclusion tests for the new factors.
+    for sig in ("quality_profitability", "pead_signal"):
+        if sig in alpha_signals:
+            v = copy.deepcopy(base)
+            v.setdefault("alpha_pipeline", {})
+            enabled = [x for x in alpha_signals if x != sig]
+            v["alpha_pipeline"]["enabled_signals"] = enabled
+            variants.append((f"no_{sig}", v))
 
     rows: list[dict[str, float | str]] = []
     bench: dict[str, dict[str, float]] | None = None

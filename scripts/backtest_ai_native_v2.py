@@ -160,6 +160,7 @@ def run_compare(cfg: dict, start_date: str, end_date: str | None, step_days: int
             net_limit=float(cfg["risk_hard_limits"].get("net_limit", 0.30)),
             max_turnover=float(v2cfg.get("max_turnover_per_cycle", 0.10)),
             alpha_tilt_strength=float(v2cfg.get("alpha_tilt_strength", 0.15)),
+            bab_tilt_strength=float(v2cfg.get("bab_tilt_strength", 0.10)),
             uncertainty_penalty=float(v2cfg.get("uncertainty_penalty", 0.50)),
             tracking_error_penalty=float(v2cfg.get("tracking_error_penalty", 1.00)),
         )

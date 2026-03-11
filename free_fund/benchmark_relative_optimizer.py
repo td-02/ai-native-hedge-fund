@@ -30,6 +30,7 @@ def optimize_benchmark_relative_weights(
     net_limit: float = 0.30,
     max_turnover: float = 0.25,
     alpha_tilt_strength: float = 0.35,
+    bab_tilt_strength: float = 0.15,
     uncertainty_penalty: float = 0.50,
     tracking_error_penalty: float = 0.60,
 ) -> tuple[pd.Series, dict[str, float]]:
@@ -55,8 +56,32 @@ def optimize_benchmark_relative_weights(
     std = float(z.std(ddof=0))
     if std > 1e-12:
         z = z / std
-    tilt = z.clip(-2.5, 2.5)
-    target = base_weights + alpha_tilt_strength * tilt / max(1.0, float(tilt.abs().sum()))
+    alpha_tilt = z.clip(-2.5, 2.5)
+
+    # BAB overlay: overweight lower-beta assets, underweight high-beta assets.
+    beta = pd.Series(0.0, index=symbols, dtype=float)
+    if len(ret) >= 40:
+        for s in symbols:
+            rs = ret[s].astype(float)
+            rb = b.astype(float)
+            aligned = pd.concat([rs, rb], axis=1).dropna()
+            if len(aligned) < 30:
+                beta.loc[s] = 1.0
+                continue
+            var_b = float(np.var(aligned.iloc[:, 1], ddof=0))
+            if var_b <= 1e-12:
+                beta.loc[s] = 1.0
+                continue
+            cov = float(np.cov(aligned.iloc[:, 0], aligned.iloc[:, 1], ddof=0)[0, 1])
+            beta.loc[s] = cov / var_b
+    if float(beta.std(ddof=0)) > 1e-12:
+        beta_z = (beta - float(beta.mean())) / float(beta.std(ddof=0))
+    else:
+        beta_z = pd.Series(0.0, index=symbols)
+    bab_tilt = (-beta_z).clip(-2.5, 2.5)
+
+    tilt = alpha_tilt_strength * alpha_tilt + bab_tilt_strength * bab_tilt
+    target = base_weights + tilt / max(1.0, float(tilt.abs().sum()))
     target = _project_constraints(target, max_weight=max_weight, gross_limit=gross_limit, net_limit=net_limit)
 
     # Turnover cap.
@@ -96,6 +121,7 @@ def optimize_benchmark_relative_weights(
         "tracking_error_base": te_base,
         "turnover": turnover,
         "objective": float(objective),
+        "avg_beta": float(beta.mean()) if len(beta) else 0.0,
     }
     return target.fillna(0.0), diag
 

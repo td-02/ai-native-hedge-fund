@@ -47,6 +47,8 @@ alpha_pipeline:
     - volume_liquidity_shock
     - short_interest
     - block_deals
+    - quality_profitability
+    - pead_signal
 
 arbitrage:
   blend_weight: 0.10
@@ -220,6 +222,7 @@ ai_native_v2:
   use_llm_forecasts: false
   llm_timeout_seconds: 8
   alpha_tilt_strength: 0.15
+  bab_tilt_strength: 0.10
   uncertainty_penalty: 0.50
   tracking_error_penalty: 1.00
   max_turnover_per_cycle: 0.10

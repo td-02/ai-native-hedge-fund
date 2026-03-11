@@ -165,6 +165,89 @@ class AlphaPipelineAgents:
             out[s] = shock
         return _zscore(pd.Series(out, dtype=float))
 
+    def quality_profitability(self, prices: pd.DataFrame) -> pd.Series:
+        # Quality/profitability composite (gross/operating margins, ROA/ROE, FCF yield proxies).
+        out: dict[str, float] = {}
+        for s in prices.columns:
+            score = 0.0
+            try:
+                info = yf.Ticker(s).info or {}
+                gp = float(info.get("grossMargins", np.nan))
+                op = float(info.get("operatingMargins", np.nan))
+                roa = float(info.get("returnOnAssets", np.nan))
+                roe = float(info.get("returnOnEquity", np.nan))
+                fcf_yield = float(info.get("freeCashflow", np.nan))
+                mcap = float(info.get("marketCap", np.nan))
+                fcf_ratio = (fcf_yield / mcap) if np.isfinite(fcf_yield) and np.isfinite(mcap) and abs(mcap) > 1e-12 else np.nan
+                vals = [
+                    0.25 * gp if np.isfinite(gp) else np.nan,
+                    0.25 * op if np.isfinite(op) else np.nan,
+                    0.25 * roa if np.isfinite(roa) else np.nan,
+                    0.15 * roe if np.isfinite(roe) else np.nan,
+                    0.10 * fcf_ratio if np.isfinite(fcf_ratio) else np.nan,
+                ]
+                vals = [float(v) for v in vals if np.isfinite(v)]
+                score = float(sum(vals)) if vals else 0.0
+            except Exception:
+                score = 0.0
+            if abs(score) <= 1e-12:
+                # Deterministic fallback: profitable quality tends to show persistent medium-term trend with lower vol.
+                ret126 = float(prices[s].pct_change(126).iloc[-1]) if len(prices) > 126 else 0.0
+                vol63 = float(prices[s].pct_change().tail(63).std(ddof=0)) if len(prices) > 63 else 0.0
+                score = 0.7 * ret126 - 0.3 * vol63
+            out[s] = score
+        return _zscore(pd.Series(out, dtype=float))
+
+    def pead_signal(self, prices: pd.DataFrame) -> pd.Series:
+        # Post-earnings-announcement drift proxy with confidence gating.
+        out: dict[str, float] = {}
+        for s in prices.columns:
+            base = 0.0
+            conf = 0.0
+            days_since = 999
+            try:
+                tk = yf.Ticker(s)
+                ed = tk.earnings_dates
+                if isinstance(ed, pd.DataFrame) and not ed.empty:
+                    row = ed.head(1).iloc[0]
+                    est = float(row.get("EPS Estimate", np.nan))
+                    rep = float(row.get("Reported EPS", np.nan))
+                    evt = pd.Timestamp(ed.index[0]) if len(ed.index) > 0 else pd.NaT
+                    if pd.notna(evt):
+                        days_since = int((pd.Timestamp.utcnow() - evt.tz_localize(None) if evt.tzinfo else pd.Timestamp.utcnow() - evt).days)
+                    if np.isfinite(est) and np.isfinite(rep) and abs(est) > 1e-12:
+                        surprise = float((rep - est) / abs(est))
+                        r1 = float(prices[s].pct_change(1).iloc[-1])
+                        r3 = float(prices[s].pct_change(3).iloc[-1]) if len(prices) > 3 else r1
+                        if 0 <= days_since <= 7:
+                            decay = float(np.exp(-days_since / 4.0))
+                            base = (0.6 * surprise + 0.4 * (0.5 * r1 + 0.5 * r3)) * decay
+                            conf = min(1.0, 0.4 + 0.6 * decay)
+            except Exception:
+                base = 0.0
+                conf = 0.0
+
+            if conf > 0.3:
+                llm_fb = {
+                    "drift_persistence": 0.5,
+                    "continuation_bias": 0.0,
+                    "confidence": 0.0,
+                }
+                llm = _safe_llm_json(
+                    (
+                        f"Ticker {s}: post-earnings drift base={base:.4f}, days_since={days_since}. "
+                        "Return JSON: {'drift_persistence': float 0-1, 'continuation_bias': float -1 to 1, 'confidence': float 0-1}"
+                    ),
+                    llm_fb,
+                )
+                llm_conf = float(max(0.0, min(1.0, llm.get("confidence", 0.0))))
+                if llm_conf > 0.5:
+                    persistence = float(max(0.0, min(1.0, llm.get("drift_persistence", 0.5))))
+                    cont = float(max(-1.0, min(1.0, llm.get("continuation_bias", 0.0))))
+                    base = (1.0 - 0.25 * llm_conf) * base + (0.25 * llm_conf) * (cont * persistence)
+            out[s] = float(base)
+        return _zscore(pd.Series(out, dtype=float))
+
     def run(self, prices: pd.DataFrame) -> dict[str, pd.Series]:
         signals: dict[str, pd.Series] = {}
         if self._has_signal("earnings_momentum"):
@@ -179,6 +262,10 @@ class AlphaPipelineAgents:
             signals["short_interest"] = self.short_interest(prices)
         if self._has_signal("block_deals"):
             signals["block_deals"] = self.block_deals(prices)
+        if self._has_signal("quality_profitability"):
+            signals["quality_profitability"] = self.quality_profitability(prices)
+        if self._has_signal("pead_signal"):
+            signals["pead_signal"] = self.pead_signal(prices)
         return signals
 
 
@@ -563,6 +650,8 @@ def combine_advanced_alpha(ticker: str, prices_df: pd.DataFrame, macro_snapshot:
     opt_fallback = {"options_signal": 0.0, "atm_iv": 0.2, "skew": 0.0, "llm_interpretation": {}}
     earn_fallback = {"earnings_signal": 0.0, "days_to_earnings": None, "llm_forecast": {}}
     macro_fallback = {"macro_signal": 0.0, "sector_tilts": {}, "macro_regime": "unknown", "yield_curve_slope": 0.0}
+    qprof_fallback = {"quality_signal": 0.0}
+    pead_fallback = {"pead_signal": 0.0}
 
     try:
         options_result = get_options_alpha(ticker, prices_df)
@@ -582,17 +671,39 @@ def combine_advanced_alpha(ticker: str, prices_df: pd.DataFrame, macro_snapshot:
         logger.warning("macro alpha failed for %s: %s", ticker, e)
         macro_result = dict(macro_fallback)
 
+    try:
+        q = AlphaPipelineAgents(enabled_signals=["quality_profitability"]).quality_profitability(
+            prices_df[[ticker]] if ticker in prices_df.columns else prices_df
+        )
+        quality_result = {"quality_signal": float(q.get(ticker, 0.0) if ticker in q.index else float(q.iloc[-1]) if len(q) else 0.0)}
+    except Exception as e:
+        logger.warning("quality alpha failed for %s: %s", ticker, e)
+        quality_result = dict(qprof_fallback)
+
+    try:
+        p = AlphaPipelineAgents(enabled_signals=["pead_signal"]).pead_signal(
+            prices_df[[ticker]] if ticker in prices_df.columns else prices_df
+        )
+        pead_result = {"pead_signal": float(p.get(ticker, 0.0) if ticker in p.index else float(p.iloc[-1]) if len(p) else 0.0)}
+    except Exception as e:
+        logger.warning("pead alpha failed for %s: %s", ticker, e)
+        pead_result = dict(pead_fallback)
+
     if BayesianSignalAggregator is not None:
-        agg = BayesianSignalAggregator(["options", "earnings", "macro"])
+        agg = BayesianSignalAggregator(["options", "earnings", "macro", "quality", "pead"])
         agg.update_signal("options", float(options_result.get("options_signal", 0.0)), std=0.3)
         agg.update_signal("earnings", float(earnings_result.get("earnings_signal", 0.0)), std=0.4)
         agg.update_signal("macro", float(macro_result.get("macro_signal", 0.0)), std=0.2)
+        agg.update_signal("quality", float(quality_result.get("quality_signal", 0.0)), std=0.35)
+        agg.update_signal("pead", float(pead_result.get("pead_signal", 0.0)), std=0.45)
         combined = agg.get_combined_signal()
     else:
         vals = [
             float(options_result.get("options_signal", 0.0)),
             float(earnings_result.get("earnings_signal", 0.0)),
             float(macro_result.get("macro_signal", 0.0)),
+            float(quality_result.get("quality_signal", 0.0)),
+            float(pead_result.get("pead_signal", 0.0)),
         ]
         combined = {"combined": float(np.mean(vals)), "uncertainty": 1.0}
 
@@ -603,6 +714,8 @@ def combine_advanced_alpha(ticker: str, prices_df: pd.DataFrame, macro_snapshot:
             "options": float(options_result.get("options_signal", 0.0)),
             "earnings": float(earnings_result.get("earnings_signal", 0.0)),
             "macro": float(macro_result.get("macro_signal", 0.0)),
+            "quality": float(quality_result.get("quality_signal", 0.0)),
+            "pead": float(pead_result.get("pead_signal", 0.0)),
         },
         "macro_regime": str(macro_result.get("macro_regime", "unknown")),
         "days_to_earnings": earnings_result.get("days_to_earnings", None),

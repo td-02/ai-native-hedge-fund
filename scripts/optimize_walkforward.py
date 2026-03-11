@@ -24,6 +24,8 @@ DEFAULT_ALPHA_SIGNALS = [
     "volume_liquidity_shock",
     "short_interest",
     "block_deals",
+    "quality_profitability",
+    "pead_signal",
 ]
 
 
