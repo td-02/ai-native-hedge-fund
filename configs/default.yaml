@@ -8,7 +8,7 @@ portfolio:
   lookback_days: 126
   max_weight: 0.30
   gross_limit: 1.00
-  rebalance_every_n_days: 5
+  rebalance_every_n_days: 21
 
 costs:
   transaction_cost_bps: 5
@@ -35,8 +35,8 @@ strategies:
     volatility_carry: 0.10
     regime_switching: 0.16
     event_driven: 0.08
-    relative_strength_rotation: 0.00
-    dual_momentum_gate: 0.00
+    relative_strength_rotation: 0.20
+    dual_momentum_gate: 0.15
 
 alpha_pipeline:
   blend_weight: 0.0
@@ -51,7 +51,7 @@ alpha_pipeline:
     - pead_signal
 
 arbitrage:
-  blend_weight: 0.10
+  blend_weight: 0.0
   enabled_signals:
     - nse_bse_price_arb
     - cash_futures_basis
@@ -59,7 +59,7 @@ arbitrage:
     - adr_arb
 
 microstructure:
-  blend_weight: 0.05
+  blend_weight: 0.0
   enabled: true
 
 research_council:
@@ -93,7 +93,7 @@ benchmark:
 fund_manager:
   turnover_penalty: 0.70
   risk_penalty_scale: 0.30
-  top_k: 2
+  top_k: 8
 
 regime_controls:
   defensive_assets: [TLT, GLD]
@@ -131,7 +131,7 @@ regime_controls:
 risk_hard_limits:
   max_weight: 0.30
   gross_limit: 1.00
-  net_limit: 0.30
+  net_limit: 0.60
   max_annual_vol: 0.20
   drawdown_brake: 0.15
   brake_scale: 0.50
@@ -139,7 +139,7 @@ risk_hard_limits:
   es_limit_95: 0.04
   concentration_top1_limit: 0.30
   concentration_top5_limit: 0.80
-  beta_neutral_band: 0.20
+  beta_neutral_band: 0.99
   jump_threshold: 0.06
   max_leverage_by_regime:
     trend: 3.0

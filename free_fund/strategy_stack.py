@@ -68,10 +68,8 @@ except Exception:  # pragma: no cover - compatibility fallback
 from llm_router import llm_chat
 
 
-def _zscore(series: pd.Series) -> pd.Series:
-    std = float(series.std(ddof=0))
-    if std <= 1e-12:
-        return pd.Series(0.0, index=series.index)
+def _zscore(series: pd.Series, min_std: float = 0.05) -> pd.Series:
+    std = max(float(series.std(ddof=0)), float(min_std))
     return ((series - float(series.mean())) / std).clip(-3, 3)
 
 
@@ -83,23 +81,40 @@ class StrategyEnsembleAgent:
     dynamic_smoothing: float = 0.30
 
     def _trend(self, window: pd.DataFrame) -> pd.Series:
-        # Robust trend: dual-horizon momentum, volatility-scaling, and crash filter.
+        n = len(window)
         rets = window.pct_change().dropna()
-        r21 = window.pct_change(21).iloc[-1]
-        r126 = window.pct_change(126).iloc[-1]
-        ma50 = window.rolling(50).mean().iloc[-1]
-        ma200 = window.rolling(200).mean().iloc[-1]
-        abs_trend = (ma50 > ma200).astype(float) * 2 - 1
-        vol63 = rets.tail(63).std(ddof=0).replace(0, np.nan)
-        risk_adj_mom = ((0.6 * r21 + 0.4 * r126) / vol63).replace([np.inf, -np.inf], 0.0).fillna(0.0)
+
+        # Adaptive lookbacks — degrade gracefully when history is short.
+        lb21 = min(20, max(2, n - 2))
+        lb63 = min(62, max(5, n - 2))
+        lb126 = min(125, max(10, n - 2))
+        lb252 = min(251, max(20, n - 2))
+
+        r21 = window.pct_change(lb21).iloc[-1]
+        r63 = window.pct_change(lb63).iloc[-1]
+        r126 = window.pct_change(lb126).iloc[-1]
+        r252 = window.pct_change(lb252).iloc[-1]
+
+        # Adaptive MAs — use half the available window minimum.
+        ma_s = window.rolling(min(50, max(5, n // 2))).mean().iloc[-1]
+        ma_l = window.rolling(min(200, max(10, n // 2))).mean().iloc[-1]
+        abs_trend = (ma_s > ma_l).astype(float) * 2 - 1
+
+        vol_w = min(63, max(10, n // 2))
+        vol = rets.tail(vol_w).std(ddof=0).replace(0, np.nan)
+
+        # Blend available momentum signals.
+        raw_mom = (0.20 * r21 + 0.25 * r63 + 0.30 * r126 + 0.25 * r252)
+        risk_adj = (raw_mom / vol).replace([np.inf, -np.inf], 0.0).fillna(0.0)
 
         market_proxy = window.mean(axis=1).dropna()
         mret = market_proxy.pct_change().dropna()
-        ann_vol = float(mret.tail(63).std(ddof=0) * np.sqrt(252)) if len(mret) >= 20 else 0.0
+        ann_vol = float(mret.tail(min(63, len(mret))).std(ddof=0) * np.sqrt(252)) if len(mret) >= 10 else 0.0
         dd = float((market_proxy / market_proxy.cummax() - 1.0).iloc[-1]) if len(market_proxy) > 1 else 0.0
-        crash_scale = 0.5 if (ann_vol > 0.28 or dd < -0.10) else 1.0
+        in_crash = ann_vol > 0.35 and dd < -0.10
+        crash_scale = 0.60 if in_crash else 1.0
 
-        score = crash_scale * (0.45 * risk_adj_mom + 0.35 * r126 + 0.20 * abs_trend)
+        score = crash_scale * (0.50 * risk_adj + 0.30 * r126 + 0.20 * abs_trend)
         return _zscore(score)
 
     def _mean_reversion(self, window: pd.DataFrame) -> pd.Series:
@@ -123,10 +138,12 @@ class StrategyEnsembleAgent:
         market_proxy = window.mean(axis=1).dropna()
         if len(market_proxy) < 64:
             return trend
-        regime_score = float(market_proxy.pct_change(63).iloc[-1])
+        ret_63 = float(market_proxy.pct_change(63).iloc[-1])
+        ret_21 = float(market_proxy.pct_change(21).iloc[-1])
         drawdown = float((market_proxy / market_proxy.cummax() - 1.0).iloc[-1])
-        breadth = float((window.pct_change(63).iloc[-1] > 0).mean())
-        risk_on = regime_score > 0 and drawdown > -0.08 and breadth >= 0.5
+        ma50 = window.rolling(50).mean().iloc[-1]
+        breadth = float((window.iloc[-1] > ma50).mean())
+        risk_on = (ret_63 > 0.02) and (ret_21 > -0.03) and (drawdown > -0.10) and (breadth >= 0.50)
         return trend if risk_on else mean_rev
 
     def _event_driven(self, symbols: list[str], research: dict[str, ResearchSignal]) -> pd.Series:
@@ -139,38 +156,47 @@ class StrategyEnsembleAgent:
                 data[symbol] = rs.sentiment * rs.confidence
         return _zscore(pd.Series(data, dtype=float))
 
-    def _relative_strength_rotation(self, window: pd.DataFrame, top_n: int = 2, bottom_n: int = 1) -> pd.Series:
-        # Cross-sectional rotation: overweight top momentum names, underweight weakest.
-        mom = 0.6 * window.pct_change(63).iloc[-1] + 0.4 * window.pct_change(126).iloc[-1]
+    def _relative_strength_rotation(self, window: pd.DataFrame, top_n: int = None, bottom_n: int = None) -> pd.Series:
+        n_assets = len(window.columns)
+        n_rows = len(window)
+        lb1 = min(62, max(5, n_rows - 2))
+        lb2 = min(125, max(10, n_rows - 2))
+
+        mom = (0.6 * window.pct_change(lb1).iloc[-1] +
+               0.4 * window.pct_change(lb2).iloc[-1])
         mom = mom.reindex(window.columns).fillna(0.0)
+
+        if top_n is None:
+            top_n = max(3, n_assets // 4)
+        if bottom_n is None:
+            bottom_n = max(1, n_assets // 10)
+
         out = pd.Series(0.0, index=window.columns, dtype=float)
-        if len(out) == 0:
-            return out
-        tn = max(1, min(int(top_n), len(out)))
-        bn = max(0, min(int(bottom_n), len(out) - tn))
-        top_idx = mom.nlargest(tn).index
+        top_idx = mom.nlargest(top_n).index
+        bot_idx = mom.nsmallest(bottom_n).index
         out.loc[top_idx] = 1.0
-        if bn > 0:
-            bot_idx = mom.nsmallest(bn).index
-            out.loc[bot_idx] = -0.5
+        out.loc[bot_idx] = -0.5
         return _zscore(out)
 
     def _dual_momentum_gate(self, window: pd.DataFrame) -> pd.Series:
-        # Absolute + relative momentum with defensive fallback.
         symbols = list(window.columns)
-        r126 = window.pct_change(126).iloc[-1].reindex(symbols).fillna(0.0)
-        r21 = window.pct_change(21).iloc[-1].reindex(symbols).fillna(0.0)
-        rel = _zscore(0.7 * r126 + 0.3 * r21)
-        gate = (r126 > 0).astype(float)
+        n = len(window)
+        lb_long = min(125, max(10, n - 2))
+        lb_short = min(20, max(2, n - 2))
+
+        r_long = window.pct_change(lb_long).iloc[-1].reindex(symbols).fillna(0.0)
+        r_short = window.pct_change(lb_short).iloc[-1].reindex(symbols).fillna(0.0)
+
+        rel = _zscore(0.7 * r_long + 0.3 * r_short)
+        gate = (r_long > 0).astype(float)
         score = rel * gate
+
         if float(score.abs().sum()) <= 1e-12:
-            # Risk-off fallback: prefer defensive assets if present.
-            defensive = [s for s in symbols if s in ("TLT", "GLD", "IEF", "SHY", "BIL")]
+            defensive = [s for s in symbols if s in ("TLT", "GLD", "IEF", "SHY", "BIL", "USMV")]
             score = pd.Series(0.0, index=symbols, dtype=float)
             if defensive:
-                w = 1.0 / len(defensive)
                 for s in defensive:
-                    score.loc[s] = w
+                    score.loc[s] = 1.0 / len(defensive)
         return _zscore(score)
 
     def run(self, window: pd.DataFrame, research: dict[str, ResearchSignal]) -> dict[str, pd.Series]:
@@ -205,10 +231,15 @@ class StrategyEnsembleAgent:
     ) -> pd.Series:
         symbols = next(iter(strategy_scores.values())).index
         active_weights = self.strategy_weights if weight_overrides is None else weight_overrides
-        combined = pd.Series(0.0, index=symbols)
+        combined = pd.Series(0.0, index=symbols, dtype=float)
         for name, score in strategy_scores.items():
-            combined = combined + float(active_weights.get(name, 0.0)) * score
-        return _zscore(combined)
+            w = float(active_weights.get(name, 0.0))
+            if abs(w) > 1e-12:
+                combined = combined + w * score.reindex(symbols).fillna(0.0)
+        std = float(combined.std(ddof=0))
+        if std > 1e-12:
+            combined = combined / std
+        return combined.fillna(0.0)
 
     def estimate_strategy_quality(
         self,
@@ -275,17 +306,27 @@ class FundManagerAgent:
             score = score - rp
 
         if top_k is not None and top_k > 0 and top_k < len(score):
-            keep = score.abs().nlargest(top_k).index
-            score = score.where(score.index.isin(keep), 0.0)
+            ranks = score.abs().rank(ascending=False, method="first")
+            penalty = (ranks > float(top_k)).astype(float) * 0.7
+            score = score * (1.0 - penalty)
 
         gross = float(score.abs().sum())
         if gross <= 1e-12:
             return pd.Series(0.0, index=score.index)
         gross_target = float(self.gross_limit if gross_limit_override is None else gross_limit_override)
         weights = (score / gross) * gross_target
-        weights = weights.clip(lower=-self.max_weight, upper=self.max_weight)
+        abs_w = weights.abs()
+        cap = float(self.max_weight)
+        over_cap = abs_w > cap
+        if bool(over_cap.any()):
+            excess = float((abs_w[over_cap] - cap).sum())
+            weights[over_cap] = weights[over_cap].clip(lower=-cap, upper=cap)
+            under_cap_mask = ~over_cap
+            under_cap_gross = float(weights[under_cap_mask].abs().sum())
+            if under_cap_gross > 1e-12:
+                weights[under_cap_mask] = weights[under_cap_mask] * (1.0 + excess / under_cap_gross)
 
-        if prev_weights is not None:
+        if prev_weights is not None and float(prev_weights.abs().sum()) > 0.05:
             prev = prev_weights.reindex(weights.index).fillna(0.0)
             # Higher penalty keeps portfolio closer to previous allocations.
             alpha = 1.0 / (1.0 + max(0.0, turnover_penalty))
@@ -312,6 +353,8 @@ class RiskManagerAgent:
     beta_neutral_band: float = 0.20
     jump_threshold: float = 0.06
     max_leverage_by_regime: dict[str, float] | None = None
+    enable_var_scaling: bool = True
+    min_net_exposure: float = 0.0
 
     def _calc_beta(self, portfolio_returns: pd.Series, benchmark_returns: pd.Series) -> float:
         aligned = pd.concat([portfolio_returns, benchmark_returns], axis=1).dropna()
@@ -339,6 +382,16 @@ class RiskManagerAgent:
             weights = weights - adjust
             flags.append("net_exposure_clamped")
 
+        # Enforce minimum net long exposure for long-biased mandate.
+        min_net = float(getattr(self, "min_net_exposure", 0.0))
+        if min_net > 0:
+            current_net = float(weights.sum())
+            if current_net < min_net:
+                shift = (min_net - current_net) / len(weights)
+                weights = weights + shift
+                weights = weights.clip(-self.max_weight, self.max_weight)
+                flags.append("min_net_enforced")
+
         gross = float(weights.abs().sum())
         if gross > self.gross_limit and gross > 1e-12:
             weights = weights / gross * self.gross_limit
@@ -363,39 +416,42 @@ class RiskManagerAgent:
 
         asset_returns = window.pct_change().dropna()
         if len(asset_returns) > 30:
-            portfolio_returns = (asset_returns * weights).sum(axis=1)
+            asset_returns_63 = asset_returns.tail(63)
+            portfolio_returns = (asset_returns_63 * weights).sum(axis=1)
             annual_vol = float(portfolio_returns.std(ddof=0) * np.sqrt(252))
             if annual_vol > self.max_annual_vol and annual_vol > 1e-12:
                 weights = weights * (self.max_annual_vol / annual_vol)
                 flags.append("vol_target_scaled")
 
             # Historical VaR/ES 95%.
-            var95 = float(np.quantile(portfolio_returns, 0.05))
-            es95 = float(portfolio_returns[portfolio_returns <= var95].mean()) if (portfolio_returns <= var95).any() else var95
-            if abs(var95) > self.var_limit_95 and abs(var95) > 1e-12:
-                scale = self.var_limit_95 / abs(var95)
-                weights = weights * scale
-                flags.append("var95_scaled")
-            if abs(es95) > self.es_limit_95 and abs(es95) > 1e-12:
-                scale = self.es_limit_95 / abs(es95)
-                weights = weights * scale
-                flags.append("es95_scaled")
+            if self.enable_var_scaling:
+                var95 = float(np.quantile(portfolio_returns, 0.05))
+                es95 = float(portfolio_returns[portfolio_returns <= var95].mean()) if (portfolio_returns <= var95).any() else var95
+                if abs(var95) > self.var_limit_95 and abs(var95) > 1e-12:
+                    scale = self.var_limit_95 / abs(var95)
+                    weights = weights * scale
+                    flags.append("var95_scaled")
+                if abs(es95) > self.es_limit_95 and abs(es95) > 1e-12:
+                    scale = self.es_limit_95 / abs(es95)
+                    weights = weights * scale
+                    flags.append("es95_scaled")
 
-            equity = (1 + portfolio_returns).cumprod()
-            drawdown = float((equity / equity.cummax() - 1).min())
-            if drawdown < -abs(self.drawdown_brake):
+            recent_equity = (1 + portfolio_returns.tail(21)).cumprod()
+            recent_dd = float((recent_equity / recent_equity.cummax() - 1).min())
+            if recent_dd < -abs(self.drawdown_brake):
                 weights = weights * self.brake_scale
                 flags.append("drawdown_brake_active")
 
             # Tail risk jump detection.
-            if float(portfolio_returns.abs().max()) > self.jump_threshold:
+            recent_max = float(np.percentile(portfolio_returns.abs().tail(21), 99))
+            if recent_max > self.jump_threshold:
                 weights = weights * self.brake_scale
                 flags.append("tail_jump_brake_active")
 
             # Beta neutrality check.
             if benchmark_symbol and benchmark_symbol in asset_returns.columns:
                 beta = self._calc_beta(portfolio_returns, asset_returns[benchmark_symbol])
-                if abs(beta) > self.beta_neutral_band and abs(beta) > 1e-12:
+                if self.beta_neutral_band < 0.95 and abs(beta) > self.beta_neutral_band and abs(beta) > 1e-12:
                     beta_scale = self.beta_neutral_band / abs(beta)
                     weights = weights * beta_scale
                     flags.append("beta_neutrality_scaled")

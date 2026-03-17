@@ -2,13 +2,42 @@ system:
   output_dir: outputs
 
 portfolio:
-  symbols: [SPY, QQQ, IWM, MDY, XLK, XLV, XLE, XLF, XLI, XLU, XLP, XLY, XLC, XLRE, MTUM, QUAL, USMV, EFA, EEM, EWJ, TLT, IEF, SHY, HYG, LQD, TIP, GLD, SLV, USO, PDBC]
-  start_date: '2018-01-01'
+  symbols:
+    - SPY
+    - QQQ
+    - IWM
+    - MDY
+    - XLK
+    - XLV
+    - XLE
+    - XLF
+    - XLI
+    - XLU
+    - XLP
+    - XLY
+    - XLC
+    - XLRE
+    - MTUM
+    - QUAL
+    - USMV
+    - EFA
+    - EEM
+    - TLT
+    - IEF
+    - SHY
+    - HYG
+    - LQD
+    - TIP
+    - GLD
+    - SLV
+    - USO
+  start_date: '2015-01-01'
   end_date: null
-  lookback_days: 252
-  max_weight: 0.25
+  lookback_days: 253
+  max_weight: 0.20
   gross_limit: 1.00
   rebalance_every_n_days: 21
+  long_only: true
 
 costs:
   transaction_cost_bps: 5
@@ -16,27 +45,24 @@ costs:
 
 risk:
   target_annual_vol: 0.15
-  min_annual_vol_floor: 0.10
+  min_annual_vol_floor: 0.08
 
 agent:
   enable_ollama_overlay: false
   enable_llm_research: false
-  ollama_model: llama3.1:8b
-  ollama_url: http://localhost:11434/api/generate
   max_headlines: 0
-  max_news_age_minutes: 15
   max_retries: 1
   retry_base_delay_sec: 0.2
 
 strategies:
   weights:
-    trend_following: 0.45
-    mean_reversion: 0.02
-    volatility_carry: 0.08
-    regime_switching: 0.10
-    event_driven: 0.00
-    relative_strength_rotation: 0.25
-    dual_momentum_gate: 0.10
+    trend_following:              0.40
+    mean_reversion:               0.00
+    volatility_carry:             0.10
+    regime_switching:             0.05
+    event_driven:                 0.00
+    relative_strength_rotation:   0.30
+    dual_momentum_gate:           0.15
 
 alpha_pipeline:
   blend_weight: 0.0
@@ -51,22 +77,14 @@ microstructure:
 research_council:
   enabled: false
   blend_weight: 0.0
-  max_rounds: 1
-  request_timeout_sec: 3
 
 learning:
   enabled: false
-  decay: 0.95
-  min_weight: 0.05
-  dynamic_min_weight: 0.05
-  dynamic_max_weight: 0.45
-  dynamic_smoothing: 0.30
-  quality_eval_days: 60
 
 execution_controls:
   min_weight_change_to_trade: 0.02
-  max_turnover_per_cycle: 1.00
-  rebalance_cooldown_cycles: 1
+  max_turnover_per_cycle: 0.50
+  rebalance_cooldown_cycles: 0
 
 private_alpha:
   blend_weight: 0.0
@@ -77,65 +95,67 @@ benchmark:
   alpha_weight: 0.0
 
 fund_manager:
-  turnover_penalty: 0.20
-  risk_penalty_scale: 0.10
-  top_k: 10
+  turnover_penalty: 0.10
+  risk_penalty_scale: 0.05
+  top_k: 12
 
 regime_controls:
-  defensive_assets: [TLT, IEF, SHY, GLD]
-  defensive_tilt: 0.06
+  regime_blend_factor: 0.20
+  defensive_assets: [TLT, IEF, GLD, SHY]
+  defensive_tilt: 0.05
   gross_limit_by_regime:
     trend: 1.00
     meanrev: 0.90
     stress: 0.60
   strategy_weights_by_regime:
     trend:
-      trend_following: 0.35
-      mean_reversion: 0.05
-      volatility_carry: 0.05
-      regime_switching: 0.15
-      event_driven: 0.05
-      relative_strength_rotation: 0.20
-      dual_momentum_gate: 0.15
+      trend_following:            0.50
+      mean_reversion:             0.00
+      volatility_carry:           0.08
+      regime_switching:           0.02
+      event_driven:               0.00
+      relative_strength_rotation: 0.30
+      dual_momentum_gate:         0.10
     meanrev:
-      trend_following: 0.12
-      mean_reversion: 0.25
-      volatility_carry: 0.15
-      regime_switching: 0.15
-      event_driven: 0.08
+      trend_following:            0.20
+      mean_reversion:             0.00
+      volatility_carry:           0.20
+      regime_switching:           0.10
+      event_driven:               0.00
       relative_strength_rotation: 0.15
-      dual_momentum_gate: 0.10
+      dual_momentum_gate:         0.35
     stress:
-      trend_following: 0.08
-      mean_reversion: 0.15
-      volatility_carry: 0.30
-      regime_switching: 0.15
-      event_driven: 0.05
-      relative_strength_rotation: 0.12
-      dual_momentum_gate: 0.15
+      trend_following:            0.05
+      mean_reversion:             0.00
+      volatility_carry:           0.50
+      regime_switching:           0.10
+      event_driven:               0.00
+      relative_strength_rotation: 0.00
+      dual_momentum_gate:         0.35
 
 risk_hard_limits:
-  max_weight: 0.25
+  max_weight: 0.20
   gross_limit: 1.00
-  net_limit: 0.80
+  net_limit: 0.95
+  min_net_exposure: 0.50
   max_annual_vol: 0.22
   drawdown_brake: 0.15
-  brake_scale: 0.60
+  brake_scale: 0.70
   var_limit_95: 0.04
   es_limit_95: 0.05
   enable_var_scaling: false
-  concentration_top1_limit: 0.25
+  concentration_top1_limit: 0.20
   concentration_top5_limit: 0.80
   beta_neutral_band: 0.99
   jump_threshold: 0.12
   max_leverage_by_regime:
-    trend: 3.0
-    meanrev: 2.5
-    volatility_carry: 8.0
-    stress: 1.0
+    trend: 1.0
+    meanrev: 0.90
+    volatility_carry: 1.0
+    stress: 0.60
 
 data_quality:
-  max_nan_ratio: 0.01
+  max_nan_ratio: 0.05
   max_abs_daily_return: 0.30
   max_zero_price_ratio: 0.0
   max_staleness_minutes: 9999999
@@ -150,10 +170,6 @@ health:
 
 alerts:
   enabled: false
-  slack_webhook: ''
-  thresholds:
-    daily_pnl_drift: 0.03
-    strategy_disagreement: 0.70
 
 tracing:
   enabled: false

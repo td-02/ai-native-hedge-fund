@@ -357,16 +357,21 @@ def main() -> None:
             raise RuntimeError("No viable candidate in fallback selection.")
         selected = best
         selected.pop("meta", None)
-        with Path(args.write_config).open("w", encoding="utf-8") as f:
-            yaml.safe_dump(selected, f, sort_keys=False)
+        should_write = bool(best_score > 0.0 and len(rows) >= 3)
         summary = {
             "windows": 0,
             "best_candidate": "fallback_full_range",
             "avg_test_excess_cagr": 0.0,
             "avg_test_excess_sharpe": best_score,
+            "config_written": should_write,
             "kept_signals": kept_signals,
             "dropped_signals": [s for s in signal_universe if s not in kept_signals],
         }
+        if should_write:
+            with Path(args.write_config).open("w", encoding="utf-8") as f:
+                yaml.safe_dump(selected, f, sort_keys=False)
+        else:
+            print("WARNING: tuned config not written (insufficient valid windows or non-positive excess Sharpe).")
         with (out_dir / "summary.yaml").open("w", encoding="utf-8") as f:
             yaml.safe_dump(summary, f, sort_keys=False)
         print("Walk-forward fallback selection complete.")
@@ -382,14 +387,21 @@ def main() -> None:
     )
     selected = next(c for c in candidates if str(c.get("meta", {}).get("candidate_name", "")) == best_name)
     selected.pop("meta", None)
-    with Path(args.write_config).open("w", encoding="utf-8") as f:
-        yaml.safe_dump(selected, f, sort_keys=False)
+    avg_excess_sharpe = float(df["test_excess_sharpe"].mean())
+    valid_windows = int(len(df))
+    should_write = bool(avg_excess_sharpe > 0.0 and valid_windows >= 3)
+    if should_write:
+        with Path(args.write_config).open("w", encoding="utf-8") as f:
+            yaml.safe_dump(selected, f, sort_keys=False)
+    else:
+        print("WARNING: tuned config not written (avg_test_excess_sharpe <= 0 or valid windows < 3).")
 
     summary = {
-        "windows": int(len(df)),
+        "windows": valid_windows,
         "best_candidate": best_name,
         "avg_test_excess_cagr": float(df["test_excess_cagr"].mean()),
-        "avg_test_excess_sharpe": float(df["test_excess_sharpe"].mean()),
+        "avg_test_excess_sharpe": avg_excess_sharpe,
+        "config_written": should_write,
         "kept_signals": kept_signals,
         "dropped_signals": [s for s in signal_universe if s not in kept_signals],
     }

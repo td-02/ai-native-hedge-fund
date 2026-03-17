@@ -5,7 +5,7 @@ portfolio:
   symbols: [SPY, QQQ, IWM, TLT, GLD]
   start_date: '2020-01-01'
   end_date: null
-  lookback_days: 126
+  lookback_days: 253
   max_weight: 0.30
   gross_limit: 1.00
   rebalance_every_n_days: 5
@@ -64,8 +64,8 @@ learning:
   quality_eval_days: 60
 
 execution_controls:
-  min_weight_change_to_trade: 0.02
-  max_turnover_per_cycle: 0.40
+  min_weight_change_to_trade: 0.04
+  max_turnover_per_cycle: 0.15
   rebalance_cooldown_cycles: 1
 
 private_alpha:
@@ -74,7 +74,7 @@ private_alpha:
 benchmark:
   mode: symbol
   symbol: SPY
-  alpha_weight: 0.20
+  alpha_weight: 0.0
 
 fund_manager:
   turnover_penalty: 0.70
@@ -117,7 +117,7 @@ regime_controls:
 risk_hard_limits:
   max_weight: 0.30
   gross_limit: 1.00
-  net_limit: 0.30
+  net_limit: 0.60
   max_annual_vol: 0.20
   drawdown_brake: 0.15
   brake_scale: 0.50
@@ -125,7 +125,7 @@ risk_hard_limits:
   es_limit_95: 0.04
   concentration_top1_limit: 0.30
   concentration_top5_limit: 0.80
-  beta_neutral_band: 0.20
+  beta_neutral_band: 0.99
   jump_threshold: 0.06
   max_leverage_by_regime:
     trend: 3.0

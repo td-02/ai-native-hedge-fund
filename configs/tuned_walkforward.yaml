@@ -12,7 +12,7 @@ portfolio:
   lookback_days: 126
   max_weight: 0.3
   gross_limit: 1.0
-  rebalance_every_n_days: 5
+  rebalance_every_n_days: 21
 costs:
   transaction_cost_bps: 5
   slippage_bps: 2
@@ -101,7 +101,7 @@ regime_controls:
 risk_hard_limits:
   max_weight: 0.3
   gross_limit: 1.0
-  net_limit: 0.3
+  net_limit: 0.6
   max_annual_vol: 0.2
   drawdown_brake: 0.15
   brake_scale: 0.5
@@ -109,7 +109,7 @@ risk_hard_limits:
   es_limit_95: 0.04
   concentration_top1_limit: 0.3
   concentration_top5_limit: 0.8
-  beta_neutral_band: 0.2
+  beta_neutral_band: 0.99
   jump_threshold: 0.06
   max_leverage_by_regime:
     trend: 3.0

@@ -135,6 +135,8 @@ class CentralizedHedgeFundSystem:
             beta_neutral_band=float(rcfg.get("beta_neutral_band", 0.20)),
             jump_threshold=float(rcfg.get("jump_threshold", 0.06)),
             max_leverage_by_regime=rcfg.get("max_leverage_by_regime", {}),
+            enable_var_scaling=bool(rcfg.get("enable_var_scaling", True)),
+            min_net_exposure=float(rcfg.get("min_net_exposure", 0.0)),
         )
         self._last_final_weights = pd.Series(dtype=float)
         self._cycle_count = 0
@@ -275,6 +277,55 @@ class CentralizedHedgeFundSystem:
         )
         self.health.beat(run_id, "cycle_start")
         self.audit.append("market_snapshot", run_id, {"rows": len(window), "symbols": symbols})
+        debug_trace = bool(self.cfg.get("debug", {}).get("trace_weights", False))
+
+        def _dbg(label: str, series: pd.Series) -> None:
+            if not debug_trace:
+                return
+            s = series.reindex(symbols).fillna(0.0)
+            focus = ["QQQ", "XLK", "SPY", "IWM", "TLT", "GLD", "XLE", "XLV", "MTUM"]
+            vals = " ".join(f"{k}:{float(s.get(k, 0.0)):+.4f}" for k in focus if k in s.index)
+            print(f"[TRACE] {label} gross={float(s.abs().sum()):.4f} net={float(s.sum()):+.4f} {vals}")
+
+        def _check_score_integrity(score: pd.Series, label: str, reference_score: pd.Series | None) -> None:
+            if reference_score is None:
+                return
+            import warnings
+
+            corr = float(score.corr(reference_score)) if len(score) and len(reference_score) else float("nan")
+            if not np.isfinite(corr):
+                corr = 1.0
+            if debug_trace:
+                print(f"[SCORE INTEGRITY] {label}: correlation={corr:.3f}")
+            if corr < 0.5:
+                warnings.warn(
+                    f"[SCORE INTEGRITY] {label}: correlation with pre-blend score = {corr:.3f} < 0.5. "
+                    "Possible blend corruption.",
+                    RuntimeWarning,
+                )
+
+        def _apply_blend_guard(
+            base: pd.Series,
+            label: str,
+            blend_series: pd.Series,
+            blend_weight: float,
+        ) -> pd.Series:
+            if float(blend_weight) <= 0.0:
+                return base
+            candidate = base + float(blend_weight) * blend_series.reindex(symbols).fillna(0.0)
+            _check_score_integrity(candidate, label, base)
+            base_abs = float(base.abs().sum())
+            cand_abs = float(candidate.abs().sum())
+            if base_abs > 1e-12 and cand_abs < 0.5 * base_abs:
+                import warnings
+
+                warnings.warn(
+                    f"[SCORE INTEGRITY] {label}: blend reduced |combined_score| by >50% "
+                    f"(from {base_abs:.4f} to {cand_abs:.4f}); skipping blend.",
+                    RuntimeWarning,
+                )
+                return base
+            return candidate
 
         dq = self.data_quality.run(window)
         if not dq.ok:
@@ -332,6 +383,17 @@ class CentralizedHedgeFundSystem:
                 parent_span_id=root_span_id,
             )
         self.audit.append("research_output", run_id, {k: v.to_dict() for k, v in research.items()})
+
+        if debug_trace and len(window) > 0:
+            start_dt = window.index[0]
+            end_dt = window.index[-1]
+            print(f"[DEBUG] window shape: {window.shape}, date range: {start_dt} to {end_dt}")
+            if "QQQ" in window.columns and "IWM" in window.columns:
+                print(f"[DEBUG] window last row QQQ: {float(window['QQQ'].iloc[-1]):.2f}, IWM: {float(window['IWM'].iloc[-1]):.2f}")
+                qqq_252 = window["QQQ"].pct_change(252).iloc[-1] if len(window) > 252 else float("nan")
+                iwm_252 = window["IWM"].pct_change(252).iloc[-1] if len(window) > 252 else float("nan")
+                print(f"[DEBUG] QQQ 252d return in window: {qqq_252:.3f}")
+                print(f"[DEBUG] IWM 252d return in window: {iwm_252:.3f}")
 
         strategy_scores = self._stage_call(
             "strategy",
@@ -426,21 +488,40 @@ class CentralizedHedgeFundSystem:
 
         regime_cfg = self.cfg.get("regime_controls", {})
         regime_w_map = regime_cfg.get("strategy_weights_by_regime", {})
-        w_override = regime_w_map.get(regime_snapshot.regime)
-        if isinstance(w_override, dict):
-            w_override = self._normalize_weights(w_override)
+        base_weights = dict(self.cfg.get("strategies", {}).get("weights", {}) or {})
+        regime_weights = regime_w_map.get(regime_snapshot.regime)
+        w_override = None
+        if isinstance(regime_weights, dict):
+            blend_factor = float(regime_cfg.get("regime_blend_factor", 0.30))
+            blend_factor = min(1.0, max(0.0, blend_factor))
+            keys = set(base_weights.keys()) | set(regime_weights.keys())
+            blended = {
+                k: (1.0 - blend_factor) * float(base_weights.get(k, regime_weights.get(k, 0.0)))
+                + blend_factor * float(regime_weights.get(k, base_weights.get(k, 0.0)))
+                for k in keys
+            }
+            w_override = self._normalize_weights(blended)
+        if debug_trace:
+            print(f"[DEBUG] weight_overrides passed to weighted_score: {w_override}")
         combined = self.strategy.weighted_score(strategy_scores, weight_overrides=w_override) * regime_snapshot.risk_multiplier
+        _dbg("combined_score", combined)
 
-        if alpha_scores:
+        if alpha_weight > 0 and alpha_scores:
             alpha_combined = pd.concat(alpha_scores.values(), axis=1).mean(axis=1).reindex(symbols).fillna(0.0)
-            combined = combined + alpha_weight * alpha_combined
-        if arb_scores:
+            combined = _apply_blend_guard(combined, "alpha_pipeline", alpha_combined, alpha_weight)
+        if arb_weight > 0 and arb_scores:
             arb_combined = pd.concat(arb_scores.values(), axis=1).mean(axis=1).reindex(symbols).fillna(0.0)
-            combined = combined + arb_weight * arb_combined
-        if private_scores:
+            combined = _apply_blend_guard(combined, "arbitrage", arb_combined, arb_weight)
+        if private_weight > 0 and private_scores:
             p_combined = pd.concat(private_scores.values(), axis=1).mean(axis=1).reindex(symbols).fillna(0.0)
-            combined = combined + private_weight * p_combined
-        combined = combined + council_weight * council_scores.reindex(symbols).fillna(0.0)
+            combined = _apply_blend_guard(combined, "private_alpha", p_combined, private_weight)
+        if council_weight > 0:
+            combined = _apply_blend_guard(
+                combined,
+                "research_council",
+                council_scores.reindex(symbols).fillna(0.0),
+                council_weight,
+            )
 
         # Explicit benchmark-relative objective: expected excess return vs benchmark.
         bench_cfg = self.cfg.get("benchmark", {})
@@ -452,7 +533,9 @@ class CentralizedHedgeFundSystem:
             bench_ret = float(r20.mean())
         else:
             bench_ret = float(r20.get(bench_symbol, 0.0))
-        combined = combined + bench_w * self._zscore_series(r20 - bench_ret).reindex(symbols).fillna(0.0)
+        if bench_w > 0:
+            bench_series = self._zscore_series(r20 - bench_ret).reindex(symbols).fillna(0.0)
+            combined = _apply_blend_guard(combined, "benchmark_relative", bench_series, bench_w)
 
         # Optional adaptive update for strategy blend.
         if bool(self.cfg.get("learning", {}).get("enabled", False)):
@@ -475,7 +558,7 @@ class CentralizedHedgeFundSystem:
                 combined = combined * 0.0
                 self.audit.append("flash_crash_detector", run_id, {"triggered": True})
             else:
-                combined = combined + micro_weight * micro
+                combined = _apply_blend_guard(combined, "microstructure", micro, micro_weight)
 
         macro_snapshot = {"mode": "fast_backtest_disabled"} if fast_backtest else self.macro_intel.snapshot()
         self.audit.append("macro_intelligence", run_id, macro_snapshot)
@@ -494,6 +577,7 @@ class CentralizedHedgeFundSystem:
             gross_limit_override=(float(gross_override) if gross_override is not None else None),
             top_k=int(fm_cfg.get("top_k", 0)) if int(fm_cfg.get("top_k", 0)) > 0 else None,
         )
+        _dbg("fund_manager_pre_risk", pre_risk)
         if regime_snapshot.regime == "stress":
             defensive_assets = regime_cfg.get("defensive_assets", ["TLT", "GLD"])
             defensive_tilt = float(regime_cfg.get("defensive_tilt", 0.10))
@@ -514,6 +598,15 @@ class CentralizedHedgeFundSystem:
             trace_id=trace_id,
             parent_span_id=root_span_id,
         )
+
+        if bool(self.cfg.get("portfolio", {}).get("long_only", False)):
+            final_weights = final_weights.clip(lower=0.0)
+            gross_lo = float(final_weights.sum())
+            gross_cap = float(min(1.0, self.cfg.get("portfolio", {}).get("gross_limit", 1.0)))
+            if gross_lo > 1e-12:
+                final_weights = final_weights / gross_lo * gross_cap
+                risk_flags = risk_flags + ["long_only_enforced"]
+        _dbg("risk_manager_output", final_weights)
         # --- Bayesian weight blend (additive, runs only if enabled) ---
         try:
             signals = {k: float(v) for k, v in combined.reindex(symbols).fillna(0.0).to_dict().items()}
@@ -549,13 +642,24 @@ class CentralizedHedgeFundSystem:
             delta = raw_delta.where(raw_delta.abs() >= min_delta, 0.0)
             final_weights = prev + delta
             turnover = float(delta.abs().sum())
-            if turnover > max_turnover and turnover > 1e-12:
-                scale = max_turnover / turnover
-                final_weights = prev + delta * scale
-                risk_flags = risk_flags + ["turnover_capped"]
+            prev_gross = float(prev.abs().sum())
+            if prev_gross >= 0.05:
+                if turnover > max_turnover and turnover > 1e-12:
+                    scale = max_turnover / turnover
+                    final_weights = prev + delta * scale
+                    risk_flags = risk_flags + ["turnover_capped"]
             if float(raw_delta.abs().sum()) > 0 and np.allclose(final_weights.values, prev.values):
                 risk_flags = risk_flags + ["trade_threshold_hold"]
             self._last_rebalance_cycle = self._cycle_count
+        _dbg("post_execution_controls", final_weights)
+
+        if self.cfg.get("portfolio", {}).get("long_only", False):
+            final_weights = final_weights.clip(lower=0.0)
+            gross = float(final_weights.sum())
+            target_gross = float(self.cfg.get("portfolio", {}).get("gross_limit", 1.0))
+            if gross > 1e-12:
+                final_weights = final_weights / gross * min(target_gross, gross)
+                risk_flags = risk_flags + ["long_only_enforced_post_controls"]
 
         self._last_final_weights = final_weights.copy()
         self._cycle_count += 1
