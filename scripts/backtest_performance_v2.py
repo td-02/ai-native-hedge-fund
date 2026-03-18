@@ -2,12 +2,11 @@ from __future__ import annotations
 
 import argparse
 import copy
-import math
 import sys
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
-import yfinance as yf
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
@@ -17,39 +16,70 @@ from backtest_orchestrator_stack import run_orchestrator_backtest
 from free_fund.config import load_config
 
 
-def _metrics(returns: pd.Series) -> dict[str, float]:
+def _metrics(returns: pd.Series, label: str = "") -> dict:
     r = returns.dropna()
     if r.empty:
         return {}
-    eq = (1.0 + r).cumprod()
-    vol = float(r.std(ddof=0) * math.sqrt(252))
-    sharpe = float((r.mean() * 252) / (vol + 1e-12))
-    dd = eq / eq.cummax() - 1.0
-    cagr = float(eq.iloc[-1] ** (252 / len(r)) - 1.0)
+    equity = (1.0 + r).cumprod()
+    # Infer actual trading days per return observation from index spacing.
+    if len(r) >= 2:
+        avg_spacing = (r.index[-1] - r.index[0]).days / max(1, len(r) - 1)
+        periods_per_year = 365.25 / max(1, avg_spacing)
+    else:
+        periods_per_year = 252  # fallback
+    vol = float(r.std(ddof=0) * np.sqrt(periods_per_year))
+    mu = float(r.mean() * periods_per_year)
+    sharpe = mu / (vol + 1e-12)
+    dd = equity / equity.cummax() - 1.0
+    n_years = (r.index[-1] - r.index[0]).days / 365.25
+    cagr = float(equity.iloc[-1] ** (1.0 / max(0.1, n_years)) - 1.0)
+    calmar = cagr / (abs(float(dd.min())) + 1e-12)
+    win_rate = float((r > 0).mean())
     return {
-        "total_return": float(eq.iloc[-1] - 1.0),
-        "cagr": cagr,
-        "annual_vol": vol,
-        "sharpe": sharpe,
-        "max_drawdown": float(dd.min()),
+        "label": label,
+        "total_return": round(float(equity.iloc[-1] - 1.0), 4),
+        "cagr": round(cagr, 4),
+        "annual_vol": round(vol, 4),
+        "sharpe": round(sharpe, 4),
+        "calmar": round(calmar, 4),
+        "max_drawdown": round(float(dd.min()), 4),
+        "win_rate": round(win_rate, 4),
+        "cycles": len(r),
     }
 
 
-def _benchmark_returns(index: pd.DatetimeIndex, symbols: list[str], mode: str = "spy") -> pd.Series:
-    start = index.min().date().isoformat()
-    end = (index.max() + pd.Timedelta(days=1)).date().isoformat()
-    if mode == "60_40":
-        px = yf.download(["SPY", "TLT"], start=start, end=end, auto_adjust=True, progress=False)["Close"]
-        if isinstance(px, pd.Series):
-            px = px.to_frame()
-        r = px.pct_change().fillna(0.0)
-        out = 0.6 * r["SPY"] + 0.4 * r["TLT"]
-        return out.reindex(index).fillna(0.0)
+def _spy_benchmark(prices: pd.DataFrame, decision_rows: list, step: int) -> pd.Series:
+    """SPY buy-and-hold with holding-period returns matching fund rebalance dates."""
+    if "SPY" not in prices.columns:
+        return pd.Series(dtype=float, name="SPY")
+    rets = prices["SPY"].pct_change().fillna(0.0)
+    period_rets = []
+    idx_list = []
+    for k, i in enumerate(decision_rows):
+        next_i = decision_rows[k + 1] if k + 1 < len(decision_rows) else min(i + step, len(prices) - 1)
+        r = rets.iloc[i + 1 : next_i + 1]
+        period_rets.append(float((1 + r).prod() - 1) if not r.empty else 0.0)
+        idx_list.append(prices.index[next_i])
+    return pd.Series(period_rets, index=idx_list, name="SPY")
 
-    s = yf.download("SPY", start=start, end=end, auto_adjust=True, progress=False)["Close"]
-    if isinstance(s, pd.DataFrame):
-        s = s.iloc[:, 0]
-    return s.pct_change().fillna(0.0).reindex(index).fillna(0.0)
+
+def _6040_benchmark(prices: pd.DataFrame, decision_rows: list, step: int) -> pd.Series:
+    """60/40 SPY+TLT with same holding periods."""
+    if "SPY" not in prices.columns:
+        return pd.Series(dtype=float, name="60_40")
+    spy = prices["SPY"].pct_change().fillna(0.0)
+    tlt = prices["TLT"].pct_change().fillna(0.0) if "TLT" in prices.columns else spy * 0
+    period_rets = []
+    idx_list = []
+    for k, i in enumerate(decision_rows):
+        next_i = decision_rows[k + 1] if k + 1 < len(decision_rows) else min(i + step, len(prices) - 1)
+        rs = spy.iloc[i + 1 : next_i + 1]
+        rt = tlt.iloc[i + 1 : next_i + 1]
+        r = 0.6 * (float((1 + rs).prod() - 1) if not rs.empty else 0.0) + \
+            0.4 * (float((1 + rt).prod() - 1) if not rt.empty else 0.0)
+        period_rets.append(r)
+        idx_list.append(prices.index[next_i])
+    return pd.Series(period_rets, index=idx_list, name="60_40")
 
 
 def _asset_attribution(weights: pd.DataFrame, prices: pd.DataFrame) -> pd.DataFrame:
@@ -111,10 +141,14 @@ def main() -> None:
     base["backtest"]["fast_mode"] = True
     v2["backtest"]["fast_mode"] = True
 
-    bw, _, bnet, beq, bmet = _run_variant(copy.deepcopy(base), args.from_date, args.to_date, args.step_days, args.max_cycles)
-    vw, _, vnet, veq, vmet = _run_variant(copy.deepcopy(v2), args.from_date, args.to_date, args.step_days, args.max_cycles)
+    bw, _, bnet, beq, bmet, prices_base, decision_rows_base = _run_variant(
+        copy.deepcopy(base), args.from_date, args.to_date, args.step_days, args.max_cycles
+    )
+    vw, _, vnet, veq, vmet, prices_v2, decision_rows_v2 = _run_variant(
+        copy.deepcopy(v2), args.from_date, args.to_date, args.step_days, args.max_cycles
+    )
 
-    # Rebalance dates differ by universe/calendar. Compare on union index with flat return on non-rebalance dates.
+    # Compare on union index with flat return on non-overlapping decision points.
     bnet.index = pd.to_datetime(bnet.index)
     vnet.index = pd.to_datetime(vnet.index)
     idx = bnet.index.union(vnet.index).sort_values()
@@ -122,8 +156,8 @@ def main() -> None:
     vnet = vnet.reindex(idx).fillna(0.0)
     beq = (1.0 + bnet).cumprod()
     veq = (1.0 + vnet).cumprod()
-    spy = _benchmark_returns(idx, symbols=[], mode="spy")
-    s6040 = _benchmark_returns(idx, symbols=[], mode="60_40")
+    spy = _spy_benchmark(prices_v2, decision_rows_v2, args.step_days).reindex(idx).fillna(0.0)
+    s6040 = _6040_benchmark(prices_v2, decision_rows_v2, args.step_days).reindex(idx).fillna(0.0)
 
     smet = _metrics(spy)
     m6040 = _metrics(s6040)
@@ -154,15 +188,8 @@ def main() -> None:
     eq_df.to_csv(out / "equity_curves.csv", index=True)
 
     # Attribution for baseline and v2.
-    price_base = yf.download(list(base["portfolio"]["symbols"]), start=args.from_date, end=(args.to_date or pd.Timestamp.today().date().isoformat()), auto_adjust=True, progress=False)["Close"]
-    if isinstance(price_base, pd.Series):
-        price_base = price_base.to_frame()
-    price_v2 = yf.download(list(v2["portfolio"]["symbols"]), start=args.from_date, end=(args.to_date or pd.Timestamp.today().date().isoformat()), auto_adjust=True, progress=False)["Close"]
-    if isinstance(price_v2, pd.Series):
-        price_v2 = price_v2.to_frame()
-
-    b_attr = _asset_attribution(bw.fillna(0.0), price_base)
-    v_attr = _asset_attribution(vw.fillna(0.0), price_v2)
+    b_attr = _asset_attribution(bw.fillna(0.0), prices_base)
+    v_attr = _asset_attribution(vw.fillna(0.0), prices_v2)
     b_attr.to_csv(out / "signal_attribution_baseline.csv", index=False)
     v_attr.to_csv(out / "signal_attribution_performance_v2.csv", index=False)
 

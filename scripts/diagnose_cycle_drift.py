@@ -44,7 +44,10 @@ for idx, i in enumerate(decision_rows):
 
     gross = w.abs().sum()
     net = w.sum()
-    next_ret = float((w * rets.iloc[i+1]).sum())
+    next_i = decision_rows[idx+1] if idx+1 < len(decision_rows) else min(i+step, len(prices)-1)
+    hold_rets = rets.iloc[i+1:next_i+1]
+    daily_p = (hold_rets * w).sum(axis=1)
+    next_ret = float((1+daily_p).prod()-1) if not daily_p.empty else 0.0
     cumulative *= (1 + next_ret)
     top = w.abs().nlargest(4)
     w_str = " ".join(f"{s}:{w[s]:+.2f}" for s in top.index)

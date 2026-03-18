@@ -43,7 +43,7 @@ def run_orchestrator_backtest(
     step_days: int,
     max_cycles: int,
     use_prices_override: bool = True,
-) -> tuple[pd.DataFrame, pd.Series, pd.Series, pd.Series, dict[str, float]]:
+) -> tuple[pd.DataFrame, pd.Series, pd.Series, pd.Series, dict[str, float], pd.DataFrame, list[int]]:
     pcfg = cfg["portfolio"]
     prices = download_close_prices(
         symbols=list(pcfg["symbols"]),
@@ -63,7 +63,8 @@ def run_orchestrator_backtest(
 
     weights_hist: list[pd.Series] = []
     gross_turnover: list[float] = []
-    returns_hist: list[float] = []
+    gross_hist: list[float] = []
+    net_hist: list[float] = []
     index_hist: list[pd.Timestamp] = []
     prev_w = pd.Series(0.0, index=prices.columns)
 
@@ -74,7 +75,10 @@ def run_orchestrator_backtest(
     cfg_rt["portfolio"]["end_date"] = None
     system = CentralizedHedgeFundSystem(cfg_rt)
 
-    for i in decision_rows:
+    fee = float(cfg["costs"]["transaction_cost_bps"]) / 10000.0
+    slip = float(cfg["costs"]["slippage_bps"]) / 10000.0
+
+    for idx, i in enumerate(decision_rows):
         dt = prices.index[i]
         system.cfg["portfolio"]["end_date"] = dt.strftime("%Y-%m-%d")
         decision = system.run_cycle(
@@ -83,27 +87,34 @@ def run_orchestrator_backtest(
         )
         w = pd.Series(decision.target_weights).reindex(prices.columns).fillna(0.0)
         turnover = float((w - prev_w).abs().sum())
-        next_ret = float((w * rets.iloc[i + 1]).sum())
-        prev_w = w
+        # Earn returns over the full holding period until the next decision.
+        next_decision = decision_rows[idx + 1] if idx + 1 < len(decision_rows) else min(i + step_days, len(prices) - 1)
+        holding_rets = rets.iloc[i + 1 : next_decision + 1]
+        if holding_rets.empty:
+            period_ret = 0.0
+        else:
+            daily_portfolio = (holding_rets * w).sum(axis=1)
+            period_ret = float((1 + daily_portfolio).prod() - 1)
+        # Cost applied once per rebalance on the turnover.
+        cost = turnover * (fee + slip)
+        net_ret = period_ret - cost
 
         weights_hist.append(w)
         gross_turnover.append(turnover)
-        returns_hist.append(next_ret)
-        index_hist.append(prices.index[i + 1])
+        gross_hist.append(period_ret)
+        net_hist.append(net_ret)
+        index_hist.append(prices.index[next_decision])
+        prev_w = w
 
     wdf = pd.DataFrame(weights_hist, index=index_hist)
     turnover_s = pd.Series(gross_turnover, index=index_hist, name="gross_turnover")
-    strat_returns = pd.Series(returns_hist, index=index_hist, name="returns")
-
-    fee = float(cfg["costs"]["transaction_cost_bps"]) / 10000.0
-    slip = float(cfg["costs"]["slippage_bps"]) / 10000.0
-    costs = turnover_s * (fee + slip)
-    net_returns = strat_returns - costs
+    strat_returns = pd.Series(gross_hist, index=index_hist, name="returns")
+    net_returns = pd.Series(net_hist, index=index_hist, name="returns_net")
     equity = (1.0 + net_returns).cumprod()
     metrics = _metrics(net_returns)
     metrics["avg_turnover"] = float(turnover_s.mean())
     metrics["cycles"] = float(len(index_hist))
-    return wdf, strat_returns, net_returns, equity, metrics
+    return wdf, strat_returns, net_returns, equity, metrics, prices, decision_rows
 
 
 def main() -> None:
@@ -125,7 +136,7 @@ def main() -> None:
     end_date = args.to_date or pcfg.get("end_date")
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
-    wdf, strat_returns, net_returns, equity, metrics = run_orchestrator_backtest(
+    wdf, strat_returns, net_returns, equity, metrics, _, _ = run_orchestrator_backtest(
         cfg=cfg,
         start_date=start_date,
         end_date=end_date,
