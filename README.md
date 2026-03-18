@@ -1,5 +1,16 @@
 # AI-Native Hedge Fund Prototype (Free + Portable)
 
+## Performance (backtested, paper only)
+
+| Period | Sharpe | CAGR | Vol | MaxDD |
+|--------|--------|------|-----|-------|
+| 2015-2026 (full) | 0.61 | 7.6% | 13.5% | -25.8% |
+| 2019-2021 (bull+COVID) | 0.55 | 9.4% | 18.1% | -14.8% |
+| 2021-2024 (post-COVID) | 0.07 | 0.2% | 10.4% | -12.6% |
+
+SPY buy-and-hold over same period: CAGR ~9.5%, Sharpe ~0.63  
+Strategy: long-only cross-sectional momentum + trend following, 28-ETF universe, monthly rebalance. **Not financial advice. Paper trading only.**
+
 Centralized multi-agent trading system with deterministic risk/execution logic, LangChain-enabled research, and audit-ready event logs.
 
 ## Architecture
