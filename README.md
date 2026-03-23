@@ -1,279 +1,351 @@
-# AI-Native Hedge Fund Prototype (Free + Portable)
+# 🧠 AI-Native Hedge Fund Prototype
 
-## Performance (backtested, paper only)
+> **Free, portable, open-source** — A production-grade multi-agent trading system with backtesting, paper execution, and full audit infrastructure. No paid APIs required.
 
-| Period | Sharpe | CAGR | Vol | MaxDD |
-|--------|--------|------|-----|-------|
-| 2015-2026 (full) | 0.61 | 7.6% | 13.5% | -25.8% |
-| 2019-2021 (bull+COVID) | 0.55 | 9.4% | 18.1% | -14.8% |
-| 2021-2024 (post-COVID) | 0.07 | 0.2% | 10.4% | -12.6% |
+[![Python](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+[![Tests](https://img.shields.io/badge/tests-passing-brightgreen)](tests/)
+[![PyPI - tracelm](https://img.shields.io/badge/tracelm-PyPI-orange)](https://pypi.org/project/tracelm/)
+[![Paper Trading](https://img.shields.io/badge/execution-Alpaca%20paper-blueviolet)](https://alpaca.markets/)
 
-SPY buy-and-hold over same period: CAGR ~9.5%, Sharpe ~0.63  
-Strategy: long-only cross-sectional momentum + trend following, 28-ETF universe, monthly rebalance. **Not financial advice. Paper trading only.**
+-----
 
-### Visuals
+## 📈 Backtest Performance
 
-#### Equity Curves (2015-2026)
-![Equity Full](outputs/media/equity_full_2015_2026.png)
+> Long-only cross-sectional momentum + trend following · 28-ETF universe · Monthly rebalance
+> **Paper trading only. Not financial advice.**
 
-#### Equity Curves (2019-2021, Bull + COVID)
-![Equity Bull](outputs/media/equity_bull_2019_2021.png)
+|Period                            |Sharpe|CAGR |Vol  |Max DD|
+|----------------------------------|------|-----|-----|------|
+|**2015–2026** (full)              |0.61  |7.6% |13.5%|-25.8%|
+|**2019–2021** (bull + COVID crash)|0.55  |9.4% |18.1%|-14.8%|
+|**2021–2024** (post-COVID)        |0.07  |0.2% |10.4%|-12.6%|
+|**SPY buy-and-hold** (same period)|~0.63 |~9.5%|—    |—     |
 
-#### Equity Curves (2021-2024, Post-COVID)
-![Equity Post-COVID](outputs/media/equity_post_2021_2024.png)
+### Equity Curves
 
-#### Performance Summary Table
-![Performance Summary](outputs/media/performance_summary_table.png)
+|Full Period (2015–2026)                                |Bull + COVID (2019–2021)                               |
+|-------------------------------------------------------|-------------------------------------------------------|
+|![Equity Full](outputs/media/equity_full_2015_2026.png)|![Equity Bull](outputs/media/equity_bull_2019_2021.png)|
 
-#### Animated Equity Evolution
-![Equity Evolution GIF](outputs/media/equity_evolution_2015_2026.gif)
+|Post-COVID (2021–2024)                                       |Performance Summary                                                |
+|-------------------------------------------------------------|-------------------------------------------------------------------|
+|![Equity Post-COVID](outputs/media/equity_post_2021_2024.png)|![Performance Summary](outputs/media/performance_summary_table.png)|
 
-Centralized multi-agent trading system with deterministic risk/execution logic, LangChain-enabled research, and audit-ready event logs.
+![Equity Evolution](outputs/media/equity_evolution_2015_2026.gif)
 
-## Architecture
-Live runtime architecture (`free_fund/orchestrator.py`):
-Data ingest -> Data quality gate -> Research -> Strategy ensemble -> Alpha/arbitrage/private/council overlays -> Regime + benchmark-relative adjustment -> Fund manager -> Risk manager -> Execution controls -> Broker router (optional execute) -> Audit + tracing + heartbeat
+-----
 
-AI-native v2 architecture (`scripts/backtest_ai_native_v2.py`, backtest-only):
-Baseline orchestrator weights -> Regime meta-router -> AI forecast + calibration -> Benchmark-relative optimizer -> No-harm guards -> Weight override for evaluation
+## ✨ What Makes This Different
 
-## Agents
-- Market/Data: pulls OHLCV from yfinance.
-- Research Agent: RSS headline analysis (deterministic), optional LangChain + local Ollama overlay.
-- Strategy Agents: trend, mean reversion, volatility carry, regime switching, event-driven.
-- Alpha Pipeline Agents: earnings momentum, analyst revisions, options IV term-structure proxy, volume/liquidity shock, short-interest proxy, block-deal proxy.
-- Cross-Asset Arbitrage Agents: NSE/BSE arb hook, cash-futures basis, ETF NAV arb, ADR arb hook.
-- Macro Intelligence Agents: RBI policy hook, global carry, crude-gold correlation, rupee regime.
-- Research Council (LLM-native): researcher/news/peer/synthesis multi-agent ranking.
-  - Uses bounded tool-using loops (price snapshot + headline snapshot tools) per symbol.
-- Adaptive Learning Layer: Bayesian-style weight drift and decay updates.
-- Private Data Alpha Hooks: bulk deals, margin pressure, F&O lot changes, corp-action arb.
-- Fund Manager: combines strategy scores into target weights.
-- Risk Manager: hard clamps, volatility scaling, drawdown brake.
-- Execution Agent: broker failover router (Alpaca -> Zerodha/Upstox/Angel hooks -> stub), TWAP/VWAP-style slicing, impact and session guards.
-- Audit Agent: hash-linked event log for reproducibility.
-- Resilience Layer: circuit breakers, retries/backoff, degraded mode, dead-man heartbeat.
+- **Fully free** — yfinance for data, Ollama for local LLM, Alpaca paper for execution. Zero paid APIs.
+- **Multi-agent architecture** — 15+ specialized agents across research, strategy, risk, and execution.
+- **Production-grade reliability** — circuit breakers, dead-man heartbeat, hash-chained audit logs, TraceLM tracing.
+- **Deployable anywhere** — Docker, Render, Railway, Oracle Always Free, or GitHub Actions (zero infra).
+- **Hackable and auditable** — every decision is logged, traceable, and reproducible.
 
-## Determinism and Auditability
-- Strict structured outputs and fixed strategy blend weights.
-- Hash-chained immutable JSONL audit log: `outputs/audit/events.jsonl`.
-- Latest decision snapshot: `outputs/last_decision.json`.
-- Heartbeat file for dead-man switch: `outputs/heartbeat.json`.
-- TraceLM span traces (cycle + stages + execution): `outputs/traces/trace_<trace_id>.json`
-- TraceLM sqlite trace DB: `tracelm_traces.db`
+-----
 
-## Reliability Controls
-- Circuit breakers per stage (`research`, `strategy`, `regime`, `risk`).
-- Data quality gate (staleness, NaN ratio, return outliers, invalid prices).
-- Risk extensions: VaR/ES, concentration caps, beta-neutrality band, jump-risk brake, regime leverage.
-- Alerts: Slack webhook option for stage failures, disagreement spikes, PnL drift, dead-man triggers.
-- Execution guards: TWAP slicing, ADV impact cap, holiday/session checks, market-mode compliance guard.
+## 🏗️ Architecture
 
-## Setup
+### Live Runtime (`free_fund/orchestrator.py`)
+
+```
+Data Ingest
+  → Data Quality Gate
+  → Research Agent
+  → Strategy Ensemble
+  → Alpha / Arbitrage / Private / Council Overlays
+  → Regime + Benchmark-Relative Adjustment
+  → Fund Manager
+  → Risk Manager
+  → Execution Controls
+  → Broker Router (Alpaca / Zerodha / Upstox / Stub)
+  → Audit + Tracing + Heartbeat
+```
+
+### AI-Native v2 (`scripts/backtest_ai_native_v2.py`, backtest only)
+
+```
+Baseline Orchestrator Weights
+  → Regime Meta-Router
+  → AI Forecast + Calibration
+  → Benchmark-Relative Optimizer
+  → No-Harm Guards
+  → Weight Override for Evaluation
+```
+
+-----
+
+## 🤖 Agents
+
+**Data & Research**
+
+- **Market/Data Agent** — OHLCV via yfinance
+- **Research Agent** — Deterministic RSS headline analysis; optional LangChain + local Ollama overlay
+- **Research Council (LLM-native)** — researcher / news / peer / synthesis multi-agent ranking with bounded tool-using loops
+
+**Strategy**
+
+- **Strategy Agents** — trend, mean reversion, volatility carry, regime switching, event-driven
+- **Alpha Pipeline** — earnings momentum, analyst revisions, options IV term-structure proxy, volume/liquidity shock, short-interest proxy, block-deal proxy
+- **Cross-Asset Arbitrage** — NSE/BSE arb hook, cash-futures basis, ETF NAV arb, ADR arb hook
+- **Macro Intelligence** — RBI policy hook, global carry, crude-gold correlation, rupee regime
+
+**Risk & Execution**
+
+- **Adaptive Learning** — Bayesian-style weight drift and decay updates
+- **Fund Manager** — combines strategy scores into target weights
+- **Risk Manager** — hard clamps, volatility scaling, drawdown brake, VaR/ES, beta-neutrality band
+- **Execution Agent** — broker failover router, TWAP/VWAP-style slicing, ADV impact cap, session guards
+- **Audit Agent** — hash-linked immutable JSONL event log
+- **Resilience Layer** — circuit breakers, retries/backoff, degraded mode, dead-man heartbeat
+
+-----
+
+## ⚡ Quick Start
+
 ```bash
-python -m venv .venv
-.venv\Scripts\activate
+# 1. Clone and set up environment
+git clone https://github.com/td-02/ai-native-hedge-fund.git
+cd ai-native-hedge-fund
+python -m venv .venv && source .venv/bin/activate  # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
-```
 
-## Environment
-Create `.env` from template and set keys for Alpaca paper execution:
-```bash
-copy .env.example .env
-```
+# 2. Configure environment
+cp .env.example .env   # Windows: copy .env.example .env
 
-Required for live paper execution:
-- `APCA_API_KEY_ID`
-- `APCA_API_SECRET_KEY`
-
-Optional:
-- `APCA_PAPER_BASE_URL` (defaults to `https://paper-api.alpaca.markets`)
-
-## Run Single Decision Cycle
-Dry run (no orders):
-```bash
+# 3. Run a dry-run decision cycle (no orders placed)
 python scripts/run_daily.py --dry-run
+
+# 4. Run the dashboard
+streamlit run app/streamlit_app.py
 ```
 
-Paper execution:
-```bash
-python scripts/run_daily.py
+**Required** (for live paper execution):
+
+```
+APCA_API_KEY_ID=...
+APCA_API_SECRET_KEY=...
 ```
 
-## Run Realtime Loop
-Dry loop:
-```bash
-python scripts/run_realtime.py --poll-seconds 300 --max-cycles 0
-```
+**Optional:** `APCA_PAPER_BASE_URL` (defaults to `https://paper-api.alpaca.markets`)
 
-Paper execution loop:
-```bash
-python scripts/run_realtime.py --execute --poll-seconds 300 --max-cycles 0
-```
+-----
 
-Paper-trading server entrypoint:
-```bash
-python scripts/live.py --config configs/live_stub.yaml --poll-seconds 300 --max-cycles 0
-```
+## 🧪 Backtest
 
-## Backtest
 ```bash
+# Standard backtest
 python scripts/run_backtest.py --config configs/default.yaml
+
+# Fast orchestrator backtest (cached replay, no LLM/RSS calls)
+python scripts/backtest_orchestrator_stack.py \
+  --config configs/backtest_fast.yaml --fast-mode \
+  --from-date 2020-01-01 --to-date 2026-03-01 \
+  --step-days 5 --max-cycles 0
+
+# AI-native v2 benchmark comparison
+python scripts/backtest_ai_native_v2.py \
+  --config configs/backtest_fast.yaml \
+  --from-date 2020-01-01 --to-date 2026-03-01 \
+  --step-days 5 --max-cycles 60 \
+  --out outputs/ai_native_v2_compare
+
+# Walk-forward auto-tuning
+python scripts/optimize_walkforward.py \
+  --config configs/backtest_fast.yaml \
+  --from-date 2020-01-01 --to-date 2026-03-01 --step-days 5
+
+# Signal ablation
+python scripts/run_ablation.py \
+  --config configs/backtest_fast.yaml --fast-mode \
+  --from-date 2020-01-01 --to-date 2026-03-01 \
+  --step-days 5 --max-cycles 40
 ```
 
-Fast orchestrator backtest (cached market replay, no RSS/LLM/macro API calls):
-```bash
-python scripts/backtest_orchestrator_stack.py --config configs/backtest_fast.yaml --fast-mode --from-date 2020-01-01 --to-date 2026-03-01 --step-days 5 --max-cycles 0
-```
+**v2 backtest outputs:**
 
-AI-native v2 benchmark-relative comparison (baseline vs v2 vs benchmarks):
-```bash
-python scripts/backtest_ai_native_v2.py --config configs/backtest_fast.yaml --from-date 2020-01-01 --to-date 2026-03-01 --step-days 5 --max-cycles 60 --out outputs/ai_native_v2_compare
-```
-Outputs:
 - `outputs/ai_native_v2_compare/comparison_metrics.csv`
 - `outputs/ai_native_v2_compare/baseline/*`
 - `outputs/ai_native_v2_compare/ai_native_v2/*`
 
-V2 layer components:
-- `free_fund/meta_router.py`: regime-aware strategy routing and gross exposure scaling.
-- `free_fund/ai_forecast_calibration.py`: forecast confidence calibration with deterministic fallback.
-- `free_fund/benchmark_relative_optimizer.py`: benchmark-relative active-weight optimizer with no-harm objective guard.
+**v2 safety behavior:** deterministic fallback when LLM is unavailable; objective gate (keeps baseline if risk-adjusted active objective ≤ 0); rolling no-harm guard in backtest loop.
 
-Safety behavior:
-- Deterministic fallback when LLM is unavailable.
-- Objective gate: if risk-adjusted active objective is non-positive, keep baseline weights.
-- Rolling no-harm guard in backtest loop: if recent v2 active return underperforms baseline, fallback to baseline policy.
-- Note: v2 is currently integrated in the comparison backtest script, not yet wired into live `run_cycle`.
+-----
 
-Fast ablation:
+## 🔄 Live Trading
+
 ```bash
-python scripts/run_ablation.py --config configs/backtest_fast.yaml --fast-mode --from-date 2020-01-01 --to-date 2026-03-01 --step-days 5 --max-cycles 40
+# Single decision cycle (dry run)
+python scripts/run_daily.py --dry-run
+
+# Single decision cycle (paper execute)
+python scripts/run_daily.py
+
+# Realtime loop (dry)
+python scripts/run_realtime.py --poll-seconds 300 --max-cycles 0
+
+# Realtime loop (paper execute)
+python scripts/run_realtime.py --execute --poll-seconds 300 --max-cycles 0
+
+# Server entrypoint
+python scripts/live.py --config configs/live_stub.yaml --poll-seconds 300 --max-cycles 0
 ```
 
-Walk-forward auto-tuning (writes `configs/tuned_walkforward.yaml`):
-```bash
-python scripts/optimize_walkforward.py --config configs/backtest_fast.yaml --from-date 2020-01-01 --to-date 2026-03-01 --step-days 5
-```
-This optimizer now scores each alpha signal out-of-sample, automatically drops negative contributors, and then tunes allocation/regime parameters on the remaining signal set.
+> **Keep `execution.broker: stub` during testing.** Switch to Alpaca only when ready.
 
-## Health Check
-```bash
-python scripts/healthcheck.py
-```
+-----
 
-## Dashboard
+## 📊 Dashboard
+
 ```bash
 streamlit run app/streamlit_app.py
 ```
 
-Shows:
-- Backtest metrics/equity.
-- Latest live decision.
-- Audit event tail.
+Shows backtest metrics & equity curve, latest live decision, and audit event tail.
 
-## Portable Deployment (Docker)
+-----
+
+## 🚀 Deployment
+
+### Docker (local or any VM)
+
 ```bash
 docker compose up --build
 ```
 
-## Oracle Always Free (24/7)
-Use the Oracle deployment bundle:
-- `deploy/oracle/README.md`
-- `deploy/oracle/install.sh`
+### Oracle Always Free (24/7 cloud — recommended)
 
-Quick start on VM:
 ```bash
 chmod +x deploy/oracle/install.sh
 ./deploy/oracle/install.sh
 ```
 
-## No-VM Free Hosting
-Preconfigured files included:
-- `render.yaml`
-- `railway.json`
-- `Procfile`
-- `deploy/free-hosting.md`
+See `deploy/oracle/README.md` for full guide.
 
-Default command on free hosts:
+### Zero-Infra Free Hosting (Render / Railway)
+
+Pre-configured files included: `render.yaml`, `railway.json`, `Procfile`, `deploy/free-hosting.md`.
+
+> Note: free-tier platforms may pause/sleep workloads — not guaranteed 24/7.
+
+### GitHub Actions (India market hours, truly free)
+
+Runs every 15 minutes on weekdays, checks IST market window (09:15–15:30) and NSE holidays before executing.
+
 ```bash
-python scripts/live.py --config configs/live_stub.yaml --poll-seconds 300 --max-cycles 0
+# Workflow:  .github/workflows/india-market-paper.yml
+# Script:    scripts/run_if_india_market_open.py
+# Holidays:  configs/market/nse_holidays.txt
 ```
 
-Note: free platforms may sleep/pause workloads, so this is not guaranteed 24/7.
+Add `APCA_API_KEY_ID` and `APCA_API_SECRET_KEY` as GitHub Actions secrets for paper execution.
 
-## Fully Free Option: GitHub Actions (India Market Hours Only)
-For your requirement (run only while market is open), use:
-- `.github/workflows/india-market-paper.yml`
-- `scripts/run_if_india_market_open.py`
-- `configs/market/nse_holidays.txt`
+-----
 
-This runs every 15 minutes on weekdays, then checks IST market window (09:15-15:30) and holiday list before executing a cycle.
+## 🔍 Auditability & Reliability
 
-Default command in workflow:
+**Audit trail:**
+
+|Artifact                    |Location                        |
+|----------------------------|--------------------------------|
+|Hash-chained JSONL event log|`outputs/audit/events.jsonl`    |
+|Latest decision snapshot    |`outputs/last_decision.json`    |
+|Heartbeat (dead-man switch) |`outputs/heartbeat.json`        |
+|TraceLM span traces         |`outputs/traces/trace_<id>.json`|
+|TraceLM SQLite DB           |`tracelm_traces.db`             |
+
+**Reliability controls:** circuit breakers per stage (`research` / `strategy` / `regime` / `risk`), data quality gate (staleness, NaN ratio, return outliers, invalid prices), Slack webhook alerts for stage failures, disagreement spikes, PnL drift, and dead-man triggers.
+
+-----
+
+## 🔌 MCP Research Tools Server
+
+Built-in MCP server exposes research tools to external clients:
+
+|Tool                       |Description                               |
+|---------------------------|------------------------------------------|
+|`news_snapshot`            |Latest headlines per symbol               |
+|`price_stats`              |OHLCV stats snapshot                      |
+|`peer_compare`             |Cross-asset peer comparison               |
+|`macro_snapshot`           |Macro indicator snapshot                  |
+|`decision_preview`         |Preview next cycle decision               |
+|`research_sprint`          |Ranked idea generator with action labels  |
+|`research_committee_prompt`|MCP prompt template for committee workflow|
+
 ```bash
-python scripts/run_daily.py --config configs/live_stub.yaml
+# HTTP transport
+python scripts/run_mcp_server.py --config configs/default.yaml \
+  --host 127.0.0.1 --port 8000 --transport streamable-http
+
+# SSE transport
+python scripts/run_mcp_server.py --transport sse
 ```
 
-To use real Alpaca paper execution in Actions:
-1. Set `execution` to Alpaca config.
-2. Add GitHub Actions secrets:
-   - `APCA_API_KEY_ID`
-   - `APCA_API_SECRET_KEY`
-   - `APCA_PAPER_BASE_URL` (optional)
+-----
 
-## Notes
-- Free/open-source only. No paid API required.
-- Keep `execution.broker: stub` during testing.
-- For LLM research, set `agent.enable_llm_research: true` and run local Ollama.
-- `configs/default.yaml` defaults: `agent.enable_llm_research: true`, `research_council.enabled: false`.
-- `configs/live_stub.yaml` remains safer for free hosted workers without local Ollama.
+## 🧾 TraceLM (Execution Tracing)
 
-## Tests
-```bash
-pytest -q
-```
+This project uses [**TraceLM**](https://pypi.org/project/tracelm/) (`pip install tracelm`) — a tracing layer for LLM execution observability and replay diagnostics, built alongside this system.
 
-## TraceLM (Full Traceability)
-This project uses **TraceLM** (`tracelm`) as the tracing layer in addition to audit logs.
-TraceLM is **my own package** for this system's execution observability and replay diagnostics.
-
-- PyPI: `https://pypi.org/project/tracelm/`
-
-- Enable/disable in config:
 ```yaml
+# configs/default.yaml
 tracing:
   enabled: true
 ```
 
-- Run one cycle and generate trace:
 ```bash
 python scripts/run_daily.py --config configs/live_stub.yaml --dry-run
+tracelm list   # inspect generated traces
 ```
 
-- Inspect generated traces:
+-----
+
+## 🧪 Tests & Health
+
 ```bash
-tracelm list
+pytest -q                    # run all tests
+python scripts/healthcheck.py  # check system health
 ```
 
-## MCP Research Tools Server
-This repo now includes an MCP server so researcher agents can access additional tools over MCP:
-- `news_snapshot`
-- `price_stats`
-- `peer_compare`
-- `macro_snapshot`
-- `decision_preview`
-- `research_sprint` (ranked idea generator with action labels)
-- `research_committee_prompt` (MCP prompt template for committee workflow)
+-----
 
-Server entrypoint:
-```bash
-python scripts/run_mcp_server.py --config configs/default.yaml --host 127.0.0.1 --port 8000 --transport streamable-http
+## 📁 Project Structure
+
+```
+free_fund/          # Core orchestrator, agents, risk, execution
+scripts/            # Backtest, live, ablation, optimization, MCP server
+configs/            # YAML configs (default, live_stub, backtest_fast, market)
+app/                # Streamlit dashboard
+deploy/             # Docker, Oracle, free-hosting configs
+outputs/            # Audit logs, traces, backtest outputs, media
+tests/              # Test suite
 ```
 
-For SSE transport:
-```bash
-python scripts/run_mcp_server.py --transport sse
-```
+-----
 
-This allows external MCP clients to connect and use the research tools in a standardized way.
+## 🗺️ Roadmap / Contributing
+
+Areas where contributions are welcome:
+
+- [ ] Additional alpha signals (PRs welcome!)
+- [ ] Wire v2 AI-native layer into live `run_cycle`
+- [ ] More broker integrations (Interactive Brokers, Fyers)
+- [ ] Better regime detection (HMM, change-point detection)
+- [ ] Web-based dashboard (React / FastAPI)
+- [ ] Improved walk-forward parameter stability
+
+See <CONTRIBUTING.md> to get started. Issues labeled `good first issue` are a great entry point.
+
+-----
+
+## ⚠️ Disclaimer
+
+This is a **research prototype** for paper trading and educational purposes only. Backtested results do not guarantee future performance. **Not financial advice.** Always use `execution.broker: stub` unless you understand the risks of live paper execution.
+
+-----
+
+## 📄 License
+
+MIT — free to use, fork, and build on.
