@@ -11,6 +11,23 @@
 SPY buy-and-hold over same period: CAGR ~9.5%, Sharpe ~0.63  
 Strategy: long-only cross-sectional momentum + trend following, 28-ETF universe, monthly rebalance. **Not financial advice. Paper trading only.**
 
+### Visuals
+
+#### Equity Curves (2015-2026)
+![Equity Full](outputs/media/equity_full_2015_2026.png)
+
+#### Equity Curves (2019-2021, Bull + COVID)
+![Equity Bull](outputs/media/equity_bull_2019_2021.png)
+
+#### Equity Curves (2021-2024, Post-COVID)
+![Equity Post-COVID](outputs/media/equity_post_2021_2024.png)
+
+#### Performance Summary Table
+![Performance Summary](outputs/media/performance_summary_table.png)
+
+#### Animated Equity Evolution
+![Equity Evolution GIF](outputs/media/equity_evolution_2015_2026.gif)
+
 Centralized multi-agent trading system with deterministic risk/execution logic, LangChain-enabled research, and audit-ready event logs.
 
 ## Architecture
