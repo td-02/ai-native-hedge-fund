@@ -167,6 +167,7 @@ python scripts/run_ablation.py \
 **v2 backtest outputs:**
 
 Nanoback-backed backtest:
+`nanoback` is my own PyPI package and these runners use it directly.
 ```bash
 python scripts/run_nanoback_backtest.py --config configs/default.yaml --policy minimum_variance --out outputs/nanoback_backtest
 ```
