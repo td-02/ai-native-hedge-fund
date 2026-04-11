@@ -166,6 +166,21 @@ python scripts/run_ablation.py \
 
 **v2 backtest outputs:**
 
+Nanoback-backed backtest:
+```bash
+python scripts/run_nanoback_backtest.py --config configs/default.yaml --policy minimum_variance --out outputs/nanoback_backtest
+```
+
+Nanoback ETF universe comparison against benchmarks:
+```bash
+python scripts/run_nanoback_etf_compare.py --config configs/performance_v2.yaml --out outputs/nanoback_etf_compare
+```
+
+AI-native v2 benchmark-relative comparison (baseline vs v2 vs benchmarks):
+```bash
+python scripts/backtest_ai_native_v2.py --config configs/backtest_fast.yaml --from-date 2020-01-01 --to-date 2026-03-01 --step-days 5 --max-cycles 60 --out outputs/ai_native_v2_compare
+```
+Outputs:
 - `outputs/ai_native_v2_compare/comparison_metrics.csv`
 - `outputs/ai_native_v2_compare/baseline/*`
 - `outputs/ai_native_v2_compare/ai_native_v2/*`
