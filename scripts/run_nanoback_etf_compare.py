@@ -53,21 +53,19 @@ def _benchmark_returns(prices: pd.DataFrame, kind: str) -> pd.Series:
     raise ValueError(f"unknown benchmark kind: {kind}")
 
 
-def _preset_definitions(lookback_days: int) -> dict[str, dict[str, object]]:
+def _preset_definitions(lookback_days: int, rebalance_every: int) -> dict[str, dict[str, object]]:
     return {
+        "nanoback_etf_core": {
+            "strategy": "equal_weight",
+            "lookback": max(21, rebalance_every),
+            "target_gross_fraction": 0.95,
+            "selection_count": 100,
+        },
         "nanoback_defensive_core": {
             "strategy": "inverse_volatility",
-            "lookback": max(63, lookback_days),
-            "rebalance_every": 21,
-            "alloc_fraction": 0.90,
-            "selection_count": 5,
-        },
-        "nanoback_etf_rotation": {
-            "strategy": "momentum_rotation",
-            "lookback": max(63, lookback_days),
-            "rebalance_every": 21,
-            "alloc_fraction": 0.90,
-            "selection_count": 2,
+            "lookback": max(63, lookback_days // 4, rebalance_every * 3),
+            "target_gross_fraction": 0.95,
+            "selection_count": 100,
         },
     }
 
@@ -76,6 +74,8 @@ def _window_scores(window: pd.DataFrame, mode: str) -> pd.Series:
     returns = window.pct_change().dropna(how="all")
     if returns.empty:
         return pd.Series(0.0, index=window.columns)
+    if mode == "equal_weight":
+        return pd.Series(1.0, index=window.columns)
     if mode == "inverse_volatility":
         vol = returns.std(ddof=0).replace(0.0, np.nan)
         scores = (1.0 / vol).replace([np.inf, -np.inf], np.nan).fillna(0.0)
@@ -95,14 +95,14 @@ class _ETFStrategy(Strategy):
         mode: str,
         lookback: int,
         rebalance_every: int,
-        alloc_fraction: float,
+        target_gross_fraction: float,
         selection_count: int,
         starting_cash: float,
     ) -> None:
         self.mode = mode
         self.lookback = int(lookback)
         self.rebalance_every = max(1, int(rebalance_every))
-        self.alloc_fraction = float(alloc_fraction)
+        self.target_gross_fraction = max(0.0, float(target_gross_fraction))
         self.selection_count = max(1, int(selection_count))
         self.starting_cash = float(starting_cash)
         self.data = None
@@ -120,20 +120,37 @@ class _ETFStrategy(Strategy):
             self.data.close[event.index - self.lookback : event.index],
             columns=self.data.symbols,
         )
-        scores = _window_scores(window, self.mode).sort_values(ascending=False)
-        selected = list(scores.head(self.selection_count).index)
-        if not selected:
-            return ()
+        scores = _window_scores(window, self.mode)
+        if self.mode == "inverse_volatility":
+            selected = list(scores.sort_values(ascending=False).head(self.selection_count).index)
+            weights = scores.reindex(selected).clip(lower=0.0)
+            if float(weights.sum()) <= 0.0:
+                weights = pd.Series(1.0, index=selected)
+            weights = weights / float(weights.sum())
+        elif self.mode == "momentum_rotation":
+            selected = list(scores.sort_values(ascending=False).head(self.selection_count).index)
+            weights = pd.Series(1.0, index=selected)
+            weights = weights / float(weights.sum())
+        else:
+            selected = list(window.columns)
+            weights = pd.Series(1.0, index=selected)
+            weights = weights / float(weights.sum())
 
-        target_value = self.starting_cash * self.alloc_fraction
-        per_asset_value = target_value / float(len(selected))
-        intents = []
+        current_prices = pd.Series(event.close, index=self.data.symbols)
+        target_value = self.starting_cash * self.target_gross_fraction
+        target_quantities = {symbol: 0 for symbol in window.columns}
         for symbol in selected:
-            asset_idx = self.data.symbols.index(symbol)
-            price = float(event.close[asset_idx])
-            if price <= 0:
+            price = float(current_prices.get(symbol, 0.0))
+            if price <= 0.0:
                 continue
-            quantity = max(1, int(round(per_asset_value / price)))
+            weight = float(weights.get(symbol, 0.0))
+            quantity = int(round((target_value * weight) / price))
+            target_quantities[symbol] = max(0, quantity)
+
+        intents = []
+        for symbol in window.columns:
+            asset_idx = self.data.symbols.index(symbol)
+            quantity = int(target_quantities.get(symbol, 0))
             intents.append(OrderIntent(asset=asset_idx, target_position=quantity))
         return intents
 
@@ -144,16 +161,26 @@ def _run_strategy(
     spec: dict[str, object],
     market,
     cleaned_prices: pd.DataFrame,
+    rebalance_every: int,
     cfg: dict,
     args: argparse.Namespace,
     out_root: Path,
 ) -> tuple[pd.Series, dict[str, float]]:
     base_cfg = _build_backtest_config(args, cfg)
+    price_floor = float(cleaned_prices.min().min())
+    if not np.isfinite(price_floor) or price_floor <= 0:
+        price_floor = 1.0
+    # nanoback's max_position is a per-asset share cap, so set it high enough for
+    # the ETF universe to express meaningful dollar allocations.
+    base_cfg.max_position = max(
+        int(base_cfg.max_position),
+        int(math.ceil(base_cfg.starting_cash / price_floor)) * 2,
+    )
     strategy = _ETFStrategy(
         mode=str(spec["strategy"]),
         lookback=int(spec["lookback"]),
-        rebalance_every=int(spec["rebalance_every"]),
-        alloc_fraction=float(spec["alloc_fraction"]),
+        rebalance_every=int(rebalance_every),
+        target_gross_fraction=float(spec["target_gross_fraction"]),
         selection_count=int(spec["selection_count"]),
         starting_cash=float(base_cfg.starting_cash),
     )
@@ -173,9 +200,9 @@ def _run_strategy(
         "variant": name,
         "policy": str(spec["strategy"]),
         "lookback": int(spec["lookback"]),
-        "rebalance_every": int(spec["rebalance_every"]),
-        "alloc_fraction": float(spec["alloc_fraction"]),
+        "target_gross_fraction": float(spec["target_gross_fraction"]),
         "selection_count": int(spec["selection_count"]),
+        "effective_max_position": int(base_cfg.max_position),
         "starting_cash": float(base_cfg.starting_cash),
         "ending_cash": float(result.ending_cash),
         "ending_equity": float(result.ending_equity),
@@ -204,7 +231,7 @@ def _run_strategy(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Compare two nanoback presets against benchmarks.")
-    parser.add_argument("--config", default="configs/backtest_fast.yaml")
+    parser.add_argument("--config", default="configs/performance_v2.yaml")
     parser.add_argument("--from-date", default=None, help="Override portfolio.start_date")
     parser.add_argument("--to-date", default=None, help="Backtest end date YYYY-MM-DD")
     parser.add_argument("--starting-cash", type=float, default=1_000_000.0)
@@ -232,7 +259,8 @@ def main() -> None:
     )
     cleaned_prices = _normalize_prices(prices)
     market = _to_market_data(cleaned_prices)
-    presets = _preset_definitions(int(pcfg.get("lookback_days", 126)))
+    presets = _preset_definitions(int(pcfg.get("lookback_days", 126)), int(pcfg.get("rebalance_every_n_days", 21)))
+    rebalance_every = int(pcfg.get("rebalance_every_n_days", 21))
 
     out_root = Path(args.out)
     out_root.mkdir(parents=True, exist_ok=True)
@@ -245,6 +273,7 @@ def main() -> None:
             spec=spec,
             market=market,
             cleaned_prices=cleaned_prices,
+            rebalance_every=rebalance_every,
             cfg=cfg,
             args=args,
             out_root=out_root,
