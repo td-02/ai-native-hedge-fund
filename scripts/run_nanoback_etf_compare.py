@@ -5,8 +5,9 @@ import math
 import sys
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
-from nanoback import run_compiled_policy_backtest, export_ledger_csv
+from nanoback import OrderIntent, Strategy, export_ledger_csv, run_strategy_backtest
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
@@ -54,25 +55,87 @@ def _benchmark_returns(prices: pd.DataFrame, kind: str) -> pd.Series:
 
 def _preset_definitions(lookback_days: int) -> dict[str, dict[str, object]]:
     return {
-        "nanoback_min_variance": {
-            "policy": "minimum_variance",
-            "policy_kwargs": {
-                "window": max(63, lookback_days // 4),
-                "ridge": 1e-6,
-                "leverage": 1.0,
-                "gross_target": 100,
-            },
+        "nanoback_defensive_core": {
+            "strategy": "inverse_volatility",
+            "lookback": max(63, lookback_days),
+            "rebalance_every": 21,
+            "alloc_fraction": 0.90,
+            "selection_count": 5,
         },
         "nanoback_etf_rotation": {
-            "policy": "cross_sectional_momentum",
-            "policy_kwargs": {
-                "lookback": max(63, lookback_days // 2),
-                "winners": 2,
-                "losers": 2,
-                "max_position": 100,
-            },
+            "strategy": "momentum_rotation",
+            "lookback": max(63, lookback_days),
+            "rebalance_every": 21,
+            "alloc_fraction": 0.90,
+            "selection_count": 2,
         },
     }
+
+
+def _window_scores(window: pd.DataFrame, mode: str) -> pd.Series:
+    returns = window.pct_change().dropna(how="all")
+    if returns.empty:
+        return pd.Series(0.0, index=window.columns)
+    if mode == "inverse_volatility":
+        vol = returns.std(ddof=0).replace(0.0, np.nan)
+        scores = (1.0 / vol).replace([np.inf, -np.inf], np.nan).fillna(0.0)
+        return scores.reindex(window.columns).fillna(0.0)
+    if mode == "momentum_rotation":
+        momentum = window.iloc[-1] / window.iloc[0] - 1.0
+        vol = returns.std(ddof=0).replace(0.0, np.nan)
+        scores = momentum / vol
+        return scores.reindex(window.columns).replace([np.inf, -np.inf], np.nan).fillna(0.0)
+    raise ValueError(f"unknown strategy mode: {mode}")
+
+
+class _ETFStrategy(Strategy):
+    def __init__(
+        self,
+        *,
+        mode: str,
+        lookback: int,
+        rebalance_every: int,
+        alloc_fraction: float,
+        selection_count: int,
+        starting_cash: float,
+    ) -> None:
+        self.mode = mode
+        self.lookback = int(lookback)
+        self.rebalance_every = max(1, int(rebalance_every))
+        self.alloc_fraction = float(alloc_fraction)
+        self.selection_count = max(1, int(selection_count))
+        self.starting_cash = float(starting_cash)
+        self.data = None
+
+    def on_start(self, data) -> None:
+        self.data = data
+
+    def on_event(self, event):
+        if self.data is None or event.index < self.lookback:
+            return ()
+        if (event.index - self.lookback) % self.rebalance_every != 0 and event.index != self.data.row_count - 1:
+            return ()
+
+        window = pd.DataFrame(
+            self.data.close[event.index - self.lookback : event.index],
+            columns=self.data.symbols,
+        )
+        scores = _window_scores(window, self.mode).sort_values(ascending=False)
+        selected = list(scores.head(self.selection_count).index)
+        if not selected:
+            return ()
+
+        target_value = self.starting_cash * self.alloc_fraction
+        per_asset_value = target_value / float(len(selected))
+        intents = []
+        for symbol in selected:
+            asset_idx = self.data.symbols.index(symbol)
+            price = float(event.close[asset_idx])
+            if price <= 0:
+                continue
+            quantity = max(1, int(round(per_asset_value / price)))
+            intents.append(OrderIntent(asset=asset_idx, target_position=quantity))
+        return intents
 
 
 def _run_strategy(
@@ -86,12 +149,15 @@ def _run_strategy(
     out_root: Path,
 ) -> tuple[pd.Series, dict[str, float]]:
     base_cfg = _build_backtest_config(args, cfg)
-    result = run_compiled_policy_backtest(
-        market,
-        policy=str(spec["policy"]),
-        config=base_cfg,
-        **dict(spec["policy_kwargs"]),
+    strategy = _ETFStrategy(
+        mode=str(spec["strategy"]),
+        lookback=int(spec["lookback"]),
+        rebalance_every=int(spec["rebalance_every"]),
+        alloc_fraction=float(spec["alloc_fraction"]),
+        selection_count=int(spec["selection_count"]),
+        starting_cash=float(base_cfg.starting_cash),
     )
+    result = run_strategy_backtest(market, strategy, config=base_cfg)
 
     out_dir = out_root / name
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -105,7 +171,11 @@ def _run_strategy(
 
     metrics = {
         "variant": name,
-        "policy": str(spec["policy"]),
+        "policy": str(spec["strategy"]),
+        "lookback": int(spec["lookback"]),
+        "rebalance_every": int(spec["rebalance_every"]),
+        "alloc_fraction": float(spec["alloc_fraction"]),
+        "selection_count": int(spec["selection_count"]),
         "starting_cash": float(base_cfg.starting_cash),
         "ending_cash": float(result.ending_cash),
         "ending_equity": float(result.ending_equity),
