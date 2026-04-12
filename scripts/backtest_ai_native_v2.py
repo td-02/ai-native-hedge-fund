@@ -105,6 +105,7 @@ def run_compare(cfg: dict, start_date: str, end_date: str | None, step_days: int
 
     cfg_v2 = copy.deepcopy(cfg_base)
     v2cfg = cfg_v2.get("ai_native_v2", {})
+    use_ai_native_v2 = bool(v2cfg.get("enabled", False))
 
     baseline = CentralizedHedgeFundSystem(cfg_base)
     v2_system = CentralizedHedgeFundSystem(cfg_v2)
@@ -141,34 +142,38 @@ def run_compare(cfg: dict, start_date: str, end_date: str | None, step_days: int
         regime = _resolve_regime(window)
         routing = router.route(regime=regime, strategy_names=list(cfg["strategies"]["weights"].keys()), quality_scores=None)
 
-        forecasts = generate_ai_forecasts(
-            prices_window=window,
-            tickers=symbols,
-            calibrator=calibrator,
-            use_llm=bool(v2cfg.get("use_llm_forecasts", False)),
-            timeout=int(v2cfg.get("llm_timeout_seconds", 8)),
-        )
+        forecasts: dict[str, dict[str, float | str]] = {}
+        w_v_opt = w_v.copy()
+        diag: dict[str, float] = {"active_alpha": 0.0, "tracking_error": 0.0, "turnover": 0.0, "objective": 0.0}
+        if use_ai_native_v2:
+            forecasts = generate_ai_forecasts(
+                prices_window=window,
+                tickers=symbols,
+                calibrator=calibrator,
+                use_llm=bool(v2cfg.get("use_llm_forecasts", False)),
+                timeout=int(v2cfg.get("llm_timeout_seconds", 8)),
+            )
 
-        bench_hist = _benchmark_series(index=window.index, symbols=symbols, mode=bench_mode, symbol=bench_symbol)
-        w_v_opt, diag = optimize_benchmark_relative_weights(
-            base_weights=w_v,
-            alpha_views=forecasts,
-            returns_window=window.pct_change().dropna().reindex(columns=symbols).fillna(0.0),
-            benchmark_returns=bench_hist.pct_change().fillna(0.0) if "Close" in str(type(bench_hist)) else bench_hist,
-            max_weight=float(cfg["portfolio"].get("max_weight", 0.30)),
-            gross_limit=float(cfg["portfolio"].get("gross_limit", 1.0)) * float(routing.gross_scale),
-            net_limit=float(cfg["risk_hard_limits"].get("net_limit", 0.30)),
-            max_turnover=float(v2cfg.get("max_turnover_per_cycle", 0.10)),
-            alpha_tilt_strength=float(v2cfg.get("alpha_tilt_strength", 0.15)),
-            bab_tilt_strength=float(v2cfg.get("bab_tilt_strength", 0.10)),
-            uncertainty_penalty=float(v2cfg.get("uncertainty_penalty", 0.50)),
-            tracking_error_penalty=float(v2cfg.get("tracking_error_penalty", 1.00)),
-        )
-        # No-harm guard: if recent live ablation underperforms, fall back to baseline policy.
-        if len(rel_perf_hist) >= 10 and float(np.mean(rel_perf_hist[-10:])) < 0.0:
-            w_v_opt = w_v.copy()
-        elif float(diag.get("objective", 0.0)) <= 0.0:
-            w_v_opt = w_v.copy()
+            bench_hist = _benchmark_series(index=window.index, symbols=symbols, mode=bench_mode, symbol=bench_symbol)
+            w_v_opt, diag = optimize_benchmark_relative_weights(
+                base_weights=w_v,
+                alpha_views=forecasts,
+                returns_window=window.pct_change().dropna().reindex(columns=symbols).fillna(0.0),
+                benchmark_returns=bench_hist.pct_change().fillna(0.0) if "Close" in str(type(bench_hist)) else bench_hist,
+                max_weight=float(cfg["portfolio"].get("max_weight", 0.30)),
+                gross_limit=float(cfg["portfolio"].get("gross_limit", 1.0)) * float(routing.gross_scale),
+                net_limit=float(cfg["risk_hard_limits"].get("net_limit", 0.30)),
+                max_turnover=float(v2cfg.get("max_turnover_per_cycle", 0.10)),
+                alpha_tilt_strength=float(v2cfg.get("alpha_tilt_strength", 0.15)),
+                bab_tilt_strength=float(v2cfg.get("bab_tilt_strength", 0.10)),
+                uncertainty_penalty=float(v2cfg.get("uncertainty_penalty", 0.50)),
+                tracking_error_penalty=float(v2cfg.get("tracking_error_penalty", 1.00)),
+            )
+            # No-harm guard: if recent live ablation underperforms, fall back to baseline policy.
+            if len(rel_perf_hist) >= 10 and float(np.mean(rel_perf_hist[-10:])) < 0.0:
+                w_v_opt = w_v.copy()
+            elif float(diag.get("objective", 0.0)) <= 0.0:
+                w_v_opt = w_v.copy()
 
         rb = float((w_b - prev_b).abs().sum())
         rv = float((w_v_opt - prev_v).abs().sum())
@@ -183,7 +188,7 @@ def run_compare(cfg: dict, start_date: str, end_date: str | None, step_days: int
         prev_v = w_v_opt
 
         # Update calibration with realized returns from previous forecast.
-        if prev_forecasts:
+        if prev_forecasts and use_ai_native_v2:
             for t in symbols:
                 try:
                     calibrator.update(

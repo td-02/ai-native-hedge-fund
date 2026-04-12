@@ -112,6 +112,27 @@ def main() -> None:
     variants.append(("no_private_alpha", v))
 
     v = copy.deepcopy(base)
+    v.setdefault("ai_alpha", {})
+    v["ai_alpha"]["enabled"] = True
+    v["ai_alpha"]["blend_weight"] = float(v["ai_alpha"].get("blend_weight", 0.30) or 0.30)
+    variants.append(("ai_alpha_enabled", v))
+
+    v = copy.deepcopy(base)
+    v.setdefault("bayesian_optimizer", {})
+    v["bayesian_optimizer"]["enabled"] = True
+    v["bayesian_optimizer"]["blend_weight"] = float(v["bayesian_optimizer"].get("blend_weight", 0.25) or 0.25)
+    variants.append(("bayesian_optimizer_enabled", v))
+
+    v = copy.deepcopy(base)
+    v.setdefault("ai_alpha", {})
+    v.setdefault("bayesian_optimizer", {})
+    v["ai_alpha"]["enabled"] = True
+    v["ai_alpha"]["blend_weight"] = float(v["ai_alpha"].get("blend_weight", 0.30) or 0.30)
+    v["bayesian_optimizer"]["enabled"] = True
+    v["bayesian_optimizer"]["blend_weight"] = float(v["bayesian_optimizer"].get("blend_weight", 0.25) or 0.25)
+    variants.append(("ai_native_combo", v))
+
+    v = copy.deepcopy(base)
     v["alpha_pipeline"]["blend_weight"] = 0.0
     v["research_council"]["blend_weight"] = 0.0
     v["research_council"]["enabled"] = False

@@ -1,5 +1,6 @@
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 import copy
+from types import SimpleNamespace
 import numpy as np
 import pandas as pd
 import pytest
@@ -318,3 +319,87 @@ def test_bayesian_layer_changes_weights_when_enabled(monkeypatch, tmp_path):
     assert not enabled_weights.equals(disabled_weights)
     assert enabled_weights["QQQ"] != disabled_weights["QQQ"]
     assert enabled_weights["TLT"] != disabled_weights["TLT"]
+
+
+def test_ai_native_v2_layer_can_be_toggled(monkeypatch):
+    import scripts.backtest_ai_native_v2 as ai_v2
+
+    idx = pd.date_range("2025-01-01", periods=18, freq="D", tz="UTC")
+    prices = pd.DataFrame(
+        {
+            "SPY": np.linspace(100, 110, len(idx)),
+            "QQQ": np.linspace(105, 120, len(idx)),
+        },
+        index=idx,
+    )
+
+    base_cfg = {
+        "system": {"output_dir": "outputs"},
+        "portfolio": {
+            "symbols": ["SPY", "QQQ"],
+            "lookback_days": 5,
+            "max_weight": 0.30,
+            "gross_limit": 1.00,
+            "start_date": "2025-01-01",
+            "end_date": None,
+        },
+        "agent": {"enable_llm_research": False, "max_headlines": 5},
+        "strategies": {
+            "weights": {
+                "trend_following": 0.5,
+                "mean_reversion": 0.2,
+                "volatility_carry": 0.1,
+                "regime_switching": 0.1,
+                "event_driven": 0.1,
+            }
+        },
+        "costs": {"transaction_cost_bps": 5, "slippage_bps": 2},
+        "risk_hard_limits": {
+            "max_weight": 0.30,
+            "gross_limit": 1.00,
+            "net_limit": 0.3,
+            "max_annual_vol": 0.20,
+            "drawdown_brake": 0.15,
+            "brake_scale": 0.50,
+        },
+        "benchmark": {"mode": "symbol", "symbol": "SPY"},
+        "data_quality": {"max_staleness_minutes": 10_000_000},
+        "resilience": {"degraded_mode_enabled": True},
+        "health": {"deadman_timeout_sec": 9999},
+        "alerts": {"enabled": False, "thresholds": {"daily_pnl_drift": 1.0, "strategy_disagreement": 99}},
+        "execution": {"broker": "stub", "market_mode": "us"},
+        "tracing": {"enabled": False},
+        "ai_native_v2": {"enabled": False, "max_turnover_per_cycle": 0.1},
+    }
+
+    def _fake_run_cycle(self, execute=False, prices_override=None):
+        return SimpleNamespace(target_weights={"SPY": 0.60, "QQQ": 0.40})
+
+    def _fake_forecasts(*args, **kwargs):
+        return {
+            "SPY": {"expected_return": 0.01, "uncertainty": 0.02, "confidence": 0.7},
+            "QQQ": {"expected_return": 0.03, "uncertainty": 0.01, "confidence": 0.8},
+        }
+
+    def _fake_optimize(**kwargs):
+        out = pd.Series({"SPY": 0.25, "QQQ": 0.75})
+        return out, {"objective": 1.0, "active_alpha": 0.2, "tracking_error": 0.0, "turnover": 0.0}
+
+    monkeypatch.setattr(ai_v2, "download_close_prices", lambda **_: prices)
+    monkeypatch.setattr(ai_v2.CentralizedHedgeFundSystem, "run_cycle", _fake_run_cycle)
+    monkeypatch.setattr(ai_v2, "generate_ai_forecasts", _fake_forecasts)
+    monkeypatch.setattr(ai_v2, "optimize_benchmark_relative_weights", _fake_optimize)
+    monkeypatch.setattr(ai_v2, "_benchmark_series", lambda index, symbols, mode, symbol: pd.Series(0.0, index=index))
+
+    disabled_table, disabled_details = ai_v2.run_compare(base_cfg, start_date="2025-01-01", end_date=None, step_days=2, max_cycles=2)
+
+    enabled_cfg = copy.deepcopy(base_cfg)
+    enabled_cfg["ai_native_v2"]["enabled"] = True
+    enabled_table, enabled_details = ai_v2.run_compare(enabled_cfg, start_date="2025-01-01", end_date=None, step_days=2, max_cycles=2)
+
+    disabled_w = disabled_details["ai_native_v2"][0]
+    enabled_w = enabled_details["ai_native_v2"][0]
+    baseline_w = enabled_details["baseline"][0]
+
+    assert disabled_w.equals(baseline_w)
+    assert not enabled_w.equals(baseline_w)
