@@ -537,6 +537,28 @@ class CentralizedHedgeFundSystem:
             bench_series = self._zscore_series(r20 - bench_ret).reindex(symbols).fillna(0.0)
             combined = _apply_blend_guard(combined, "benchmark_relative", bench_series, bench_w)
 
+        ai_alpha_cfg = self.cfg.get("ai_alpha", {})
+        if bool(ai_alpha_cfg.get("enabled", False)):
+            ai_alpha_out = run_ai_alpha_layer(
+                window,
+                {k: float(v) for k, v in combined.reindex(symbols).fillna(0.0).to_dict().items()},
+                self.cfg,
+                audit_logger=self.audit,
+            )
+            combined = pd.Series(
+                {k: float(v) for k, v in ai_alpha_out.items()},
+                dtype=float,
+            ).reindex(symbols).fillna(0.0)
+            self.audit.append(
+                "ai_alpha_layer",
+                run_id,
+                {
+                    "enabled": True,
+                    "blend_weight": float(ai_alpha_cfg.get("blend_weight", 0.3)),
+                    "tickers": list(symbols),
+                },
+            )
+
         # Optional adaptive update for strategy blend.
         if bool(self.cfg.get("learning", {}).get("enabled", False)):
             recent_perf = self.strategy.estimate_strategy_quality(
