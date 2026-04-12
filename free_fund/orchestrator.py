@@ -630,23 +630,33 @@ class CentralizedHedgeFundSystem:
                 risk_flags = risk_flags + ["long_only_enforced"]
         _dbg("risk_manager_output", final_weights)
         # --- Bayesian weight blend (additive, runs only if enabled) ---
-        try:
-            signals = {k: float(v) for k, v in combined.reindex(symbols).fillna(0.0).to_dict().items()}
-            prices_df = window.copy()
-            config = self.cfg
-            bayes_result = run_bayesian_optimization(signals, prices_df, config)
-            if bayes_result and "mean_weights" in bayes_result:
-                bayes_blend = config.get("bayesian_optimizer", {}).get("blend_weight", 0.25)
-                for ticker in list(final_weights.index):
-                    if ticker in bayes_result["mean_weights"]:
-                        diff = abs(float(bayes_result["mean_weights"][ticker]) - float(final_weights[ticker]))
-                        if diff < 0.20:  # Safety guard: only blend if difference is small
-                            final_weights[ticker] = (
-                                (1 - bayes_blend) * float(final_weights[ticker]) +
-                                bayes_blend * float(bayes_result["mean_weights"][ticker])
-                            )
-        except Exception:
-            pass  # Never let bayesian layer break existing flow
+        bayes_cfg = self.cfg.get("bayesian_optimizer", {})
+        if bool(bayes_cfg.get("enabled", False)):
+            try:
+                signals = {k: float(v) for k, v in combined.reindex(symbols).fillna(0.0).to_dict().items()}
+                prices_df = window.copy()
+                bayes_result = run_bayesian_optimization(signals, prices_df, self.cfg)
+                if bayes_result and "mean_weights" in bayes_result:
+                    bayes_blend = float(bayes_cfg.get("blend_weight", 0.25))
+                    for ticker in list(final_weights.index):
+                        if ticker in bayes_result["mean_weights"]:
+                            diff = abs(float(bayes_result["mean_weights"][ticker]) - float(final_weights[ticker]))
+                            if diff < 0.20:  # Safety guard: only blend if difference is small
+                                final_weights[ticker] = (
+                                    (1 - bayes_blend) * float(final_weights[ticker]) +
+                                    bayes_blend * float(bayes_result["mean_weights"][ticker])
+                                )
+                    self.audit.append(
+                        "bayesian_optimizer_layer",
+                        run_id,
+                        {
+                            "enabled": True,
+                            "blend_weight": bayes_blend,
+                            "n_assets": len(bayes_result.get("mean_weights", {})),
+                        },
+                    )
+            except Exception:
+                pass  # Never let bayesian layer break existing flow
         # --- End Bayesian blend ---
         controls = self.cfg.get("execution_controls", {})
         min_delta = float(controls.get("min_weight_change_to_trade", 0.02))

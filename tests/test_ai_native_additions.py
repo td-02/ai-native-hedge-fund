@@ -225,3 +225,96 @@ def test_ai_alpha_layer_changes_weights_when_enabled(monkeypatch, tmp_path):
     assert not enabled_weights.equals(disabled_weights)
     assert enabled_weights["QQQ"] != disabled_weights["QQQ"]
     assert enabled_weights["TLT"] != disabled_weights["TLT"]
+
+
+def test_bayesian_layer_changes_weights_when_enabled(monkeypatch, tmp_path):
+    import free_fund.orchestrator as orch
+    from free_fund.orchestrator import CentralizedHedgeFundSystem
+
+    idx = pd.date_range("2025-01-01", periods=180, freq="D", tz="UTC")
+    base = np.linspace(100, 120, len(idx))
+    prices = pd.DataFrame(
+        {
+            "SPY": base,
+            "QQQ": base * 1.10,
+            "IWM": base * 0.95,
+            "TLT": base * 0.85,
+            "GLD": base * 0.90,
+        },
+        index=idx,
+    )
+
+    cfg = {
+        "system": {"output_dir": str(tmp_path)},
+        "portfolio": {
+            "symbols": ["SPY", "QQQ", "IWM", "TLT", "GLD"],
+            "start_date": "2025-01-01",
+            "end_date": None,
+            "lookback_days": 126,
+            "max_weight": 0.30,
+            "gross_limit": 1.00,
+            "long_only": True,
+        },
+        "agent": {"enable_llm_research": False, "max_headlines": 5},
+        "strategies": {
+            "weights": {
+                "trend_following": 0.40,
+                "mean_reversion": 0.20,
+                "volatility_carry": 0.10,
+                "regime_switching": 0.20,
+                "event_driven": 0.10,
+            }
+        },
+        "risk_hard_limits": {
+            "max_weight": 0.30,
+            "gross_limit": 1.00,
+            "net_limit": 0.30,
+            "max_annual_vol": 0.20,
+            "drawdown_brake": 0.15,
+            "brake_scale": 0.50,
+        },
+        "data_quality": {
+            "max_nan_ratio": 1.0,
+            "max_abs_daily_return": 2.0,
+            "max_zero_price_ratio": 1.0,
+            "max_staleness_minutes": 10_000_000,
+        },
+        "resilience": {"degraded_mode_enabled": True},
+        "health": {"deadman_timeout_sec": 9999},
+        "alerts": {"enabled": False, "thresholds": {"daily_pnl_drift": 1.0, "strategy_disagreement": 99}},
+        "execution": {"broker": "stub", "market_mode": "us"},
+        "backtest": {"fast_mode": True},
+    }
+
+    disabled_cfg = copy.deepcopy(cfg)
+    disabled_cfg["bayesian_optimizer"] = {"enabled": False, "blend_weight": 0.25}
+    disabled_cfg["ai_alpha"] = {"enabled": False, "blend_weight": 0.35}
+    enabled_cfg = copy.deepcopy(cfg)
+    enabled_cfg["bayesian_optimizer"] = {"enabled": True, "blend_weight": 0.25}
+    enabled_cfg["ai_alpha"] = {"enabled": False, "blend_weight": 0.35}
+
+    def _fake_bayes(signals, prices_df, config):
+        return {
+            "mean_weights": {
+                "SPY": 0.10,
+                "QQQ": 0.35,
+                "IWM": 0.05,
+                "TLT": 0.25,
+                "GLD": 0.25,
+            },
+            "std_weights": {},
+            "p5_weights": {},
+            "p95_weights": {},
+        }
+
+    monkeypatch.setattr(orch, "run_bayesian_optimization", _fake_bayes)
+
+    disabled_decision = CentralizedHedgeFundSystem(disabled_cfg).run_cycle(execute=False, prices_override=prices)
+    enabled_decision = CentralizedHedgeFundSystem(enabled_cfg).run_cycle(execute=False, prices_override=prices)
+
+    disabled_weights = pd.Series(disabled_decision.target_weights)
+    enabled_weights = pd.Series(enabled_decision.target_weights)
+
+    assert not enabled_weights.equals(disabled_weights)
+    assert enabled_weights["QQQ"] != disabled_weights["QQQ"]
+    assert enabled_weights["TLT"] != disabled_weights["TLT"]
