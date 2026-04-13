@@ -112,6 +112,11 @@ def main() -> None:
     variants.append(("no_private_alpha", v))
 
     v = copy.deepcopy(base)
+    v.setdefault("ai_native_v2", {})
+    v["ai_native_v2"]["enabled"] = False
+    variants.append(("no_ai_native_v2", v))
+
+    v = copy.deepcopy(base)
     v.setdefault("ai_alpha", {})
     v["ai_alpha"]["enabled"] = True
     v["ai_alpha"]["blend_weight"] = float(v["ai_alpha"].get("blend_weight", 0.30) or 0.30)
@@ -165,7 +170,7 @@ def main() -> None:
     rows: list[dict[str, float | str]] = []
     bench: dict[str, dict[str, float]] | None = None
     for name, cfg in variants:
-        _, _, net, _, m = run_orchestrator_backtest(
+        _, _, net, _, m, _, _ = run_orchestrator_backtest(
             cfg=cfg,
             start_date=args.from_date,
             end_date=args.to_date,

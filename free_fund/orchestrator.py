@@ -774,6 +774,7 @@ def run_ai_alpha_layer(prices_df, signals, config, audit_logger=None) -> dict:
 
     if not bool(config.get("ai_alpha", {}).get("enabled", False)):
         return signals
+    fast_mode = bool(config.get("backtest", {}).get("fast_mode", False))
     logger = logging.getLogger(__name__)
     macro_snapshot = config.get(
         "macro_snapshot",
@@ -784,22 +785,41 @@ def run_ai_alpha_layer(prices_df, signals, config, audit_logger=None) -> dict:
     alpha_dump: dict = {}
     for ticker in list(out.keys()):
         try:
-            alpha = combine_advanced_alpha(ticker, prices_df, macro_snapshot)
             existing = out[ticker] if isinstance(out[ticker], float) else out[ticker].get("signal", 0.0)
+            if fast_mode:
+                series = prices_df[ticker].dropna().astype(float) if ticker in prices_df.columns else pd.Series(dtype=float)
+                ret_5d = float(series.pct_change(5).iloc[-1]) if len(series) > 6 else 0.0
+                ret_20d = float(series.pct_change(20).iloc[-1]) if len(series) > 21 else ret_5d
+                ret_63d = float(series.pct_change(63).iloc[-1]) if len(series) > 64 else ret_20d
+                combined_alpha = 0.50 * ret_5d + 0.30 * ret_20d + 0.20 * ret_63d
+                alpha = {
+                    "combined_alpha": float(combined_alpha),
+                    "uncertainty": 0.25,
+                    "breakdown": {
+                        "momentum_5d": ret_5d,
+                        "momentum_20d": ret_20d,
+                        "momentum_63d": ret_63d,
+                    },
+                    "macro_regime": "fast_mode_proxy",
+                    "days_to_earnings": None,
+                }
+            else:
+                alpha = combine_advanced_alpha(ticker, prices_df, macro_snapshot)
             out[ticker] = (1.0 - blend) * float(existing) + blend * float(alpha.get("combined_alpha", 0.0))
             alpha_dump[ticker] = alpha
         except Exception as e:
             logger.warning("AI alpha layer failed for %s: %s", ticker, e)
             continue
 
-    try:
-        # Safe default: no headlines provided in this integration path.
-        enriched = enrich_signals_with_llm(out, [])
-        for ticker, v in enriched.items():
-            if ticker in out and isinstance(v, dict):
-                out[ticker] = float(v.get("signal", out[ticker] if isinstance(out[ticker], float) else 0.0))
-    except Exception:
-        pass
+    if not fast_mode:
+        try:
+            # Safe default: no headlines provided in this integration path.
+            enriched = enrich_signals_with_llm(out, [])
+            for ticker, v in enriched.items():
+                if ticker in out and isinstance(v, dict):
+                    out[ticker] = float(v.get("signal", out[ticker] if isinstance(out[ticker], float) else 0.0))
+        except Exception:
+            pass
 
     if audit_logger is not None and hasattr(audit_logger, "append"):
         try:
@@ -837,9 +857,19 @@ def run_bayesian_optimization(signals: dict, prices_df: pd.DataFrame, config: di
             optimizer.add_llm_view(
                 {"assets": [ticker], "outperformance": float(signal_value), "confidence": 0.6}
             )
-        result = optimizer.optimize_with_uncertainty(
-            n_samples=int(bcfg.get("n_uncertainty_samples", 500))
-        )
+        if bool(config.get("backtest", {}).get("fast_mode", False)):
+            result = optimizer.optimize()
+            result = {
+                "mean_weights": result.get("weights", {}),
+                "std_weights": {k: 0.0 for k in result.get("weights", {})},
+                "p5_weights": {k: float(v) for k, v in result.get("weights", {}).items()},
+                "p95_weights": {k: float(v) for k, v in result.get("weights", {}).items()},
+                "posterior_cov": result.get("posterior_cov", np.zeros((0, 0))),
+            }
+        else:
+            result = optimizer.optimize_with_uncertainty(
+                n_samples=int(bcfg.get("n_uncertainty_samples", 500))
+            )
         out_dir = Path("outputs")
         out_dir.mkdir(parents=True, exist_ok=True)
         try:
