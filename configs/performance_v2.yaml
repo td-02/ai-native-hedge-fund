@@ -182,3 +182,24 @@ execution:
   primary_broker: stub
   backup_brokers: [stub]
   market_mode: us
+
+ai_native_v2:
+  enabled: true
+  use_llm_forecasts: false
+  llm_timeout_seconds: 8
+  alpha_tilt_strength: 0.15
+  bab_tilt_strength: 0.10
+  uncertainty_penalty: 0.50
+  tracking_error_penalty: 1.00
+  max_turnover_per_cycle: 0.10
+  calibration_decay: 0.95
+  calibration_min_history: 20
+  default_regime: sideways
+  min_strategy_weight: 0.03
+  max_strategy_weight: 0.60
+  quality_tilt_strength: 0.35
+  gross_scale_by_regime:
+    bull: 1.00
+    bear: 0.75
+    crisis: 0.45
+    sideways: 0.85
