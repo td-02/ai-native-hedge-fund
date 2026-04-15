@@ -1,0 +1,2 @@
+variant,policy,lookback,rebalance_every,alloc_fraction,selection_count,starting_cash,ending_cash,ending_equity,pnl,turnover,total_fees,total_borrow_cost,total_cash_yield,peak_equity,max_drawdown_raw,halted_by_risk,submitted_orders,filled_orders,rejected_orders,symbols,rows,total_return,cagr,annual_vol,sharpe,max_drawdown,win_rate
+nanoback_etf_rotation,momentum_rotation,126,21,0.9,2,1000000.0,1000000.0,1000000.0,0.0,0.0,0.0,0.0,0.0,1000000.0,0.0,False,0,0,0,5,9,0.0,0.0,0.0,0.0,0.0,0.0

@@ -1,18 +1,1 @@
-pandas
-numpy
-yfinance
-pandas-datareader
-PyYAML
-requests
-streamlit
-plotly
-langchain
-feedparser
-pytest
-tracelm
-mcp
-scipy>=1.11
-hmmlearn>=0.3
-filterpy>=1.4
-aiohttp>=3.9
-nanoback==0.1.1
+-e .

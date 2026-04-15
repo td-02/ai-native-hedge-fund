@@ -1,0 +1,81 @@
+[build-system]
+requires = ["hatchling>=1.25.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "ainhf"
+version = "0.2.0"
+description = "AI-native hedge fund runtime with API, queue workers, and audit persistence."
+readme = "README.md"
+requires-python = ">=3.11,<3.13"
+license = { text = "MIT" }
+authors = [
+  { name = "ai-hedge-fund-free maintainers" }
+]
+dependencies = [
+  "aiohttp>=3.9",
+  "alembic>=1.14",
+  "celery[redis]>=5.4",
+  "fastapi>=0.115",
+  "feedparser>=6.0",
+  "filterpy>=1.4",
+  "hmmlearn>=0.3",
+  "langchain-core>=0.3",
+  "langgraph>=0.3",
+  "mcp",
+  "nanoback==0.1.1",
+  "numpy",
+  "pandas",
+  "pandas-datareader",
+  "prometheus-client>=0.21",
+  "psycopg[binary]>=3.2",
+  "pydantic-settings>=2.7",
+  "PyYAML",
+  "redis>=5.2",
+  "requests",
+  "scipy>=1.11",
+  "smartapi-python>=1.5",
+  "SQLAlchemy>=2.0",
+  "streamlit",
+  "structlog>=25.0",
+  "tracelm",
+  "typer>=0.15",
+  "uvicorn>=0.34",
+  "yfinance",
+]
+
+[project.optional-dependencies]
+dev = [
+  "coverage[toml]>=7.6",
+  "hypothesis>=6.120",
+  "httpx>=0.28",
+  "pytest>=8.3",
+  "pytest-celery>=1.2",
+  "pytest-cov>=6.0",
+  "vcrpy>=6.0",
+]
+brokers = [
+  "kiteconnect>=5.0",
+]
+
+[project.scripts]
+ainhf = "free_fund.cli:app"
+
+[tool.hatch.build.targets.wheel]
+packages = ["free_fund", "app"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--cov=free_fund --cov=app --cov-report=term-missing --cov-fail-under=80"
+
+[tool.coverage.run]
+branch = true
+source = ["free_fund", "app"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false
+
+[tool.uv]
+managed = true
+

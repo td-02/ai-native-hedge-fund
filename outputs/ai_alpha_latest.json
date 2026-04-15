@@ -1,0 +1,366 @@
+{
+  "EEM": {
+    "breakdown": {
+      "earnings": 0.0,
+      "macro": 0.0,
+      "options": 0.0,
+      "pead": 0.0,
+      "quality": 0.0
+    },
+    "combined_alpha": 0.0,
+    "days_to_earnings": null,
+    "macro_regime": "unknown",
+    "uncertainty": 0.13427640323548454
+  },
+  "EFA": {
+    "breakdown": {
+      "earnings": 0.0,
+      "macro": 0.0,
+      "options": 0.0,
+      "pead": 0.0,
+      "quality": 0.0
+    },
+    "combined_alpha": 0.0,
+    "days_to_earnings": null,
+    "macro_regime": "unknown",
+    "uncertainty": 0.13427640323548454
+  },
+  "GLD": {
+    "breakdown": {
+      "earnings": 0.0,
+      "macro": 0.0,
+      "options": 0.0,
+      "pead": 0.0,
+      "quality": 0.0
+    },
+    "combined_alpha": 0.0,
+    "days_to_earnings": null,
+    "macro_regime": "unknown",
+    "uncertainty": 0.13427640323548454
+  },
+  "HYG": {
+    "breakdown": {
+      "earnings": 0.0,
+      "macro": 0.0,
+      "options": 0.0,
+      "pead": 0.0,
+      "quality": 0.0
+    },
+    "combined_alpha": 0.0,
+    "days_to_earnings": null,
+    "macro_regime": "unknown",
+    "uncertainty": 0.13427640323548454
+  },
+  "IEF": {
+    "breakdown": {
+      "earnings": 0.0,
+      "macro": 0.0,
+      "options": 0.0,
+      "pead": 0.0,
+      "quality": 0.0
+    },
+    "combined_alpha": 0.0,
+    "days_to_earnings": null,
+    "macro_regime": "unknown",
+    "uncertainty": 0.13427640323548454
+  },
+  "IWM": {
+    "breakdown": {
+      "earnings": 0.0,
+      "macro": 0.0,
+      "options": 0.0,
+      "pead": 0.0,
+      "quality": 0.0
+    },
+    "combined_alpha": 0.0,
+    "days_to_earnings": null,
+    "macro_regime": "unknown",
+    "uncertainty": 0.13427640323548454
+  },
+  "LQD": {
+    "breakdown": {
+      "earnings": 0.0,
+      "macro": 0.0,
+      "options": 0.0,
+      "pead": 0.0,
+      "quality": 0.0
+    },
+    "combined_alpha": 0.0,
+    "days_to_earnings": null,
+    "macro_regime": "unknown",
+    "uncertainty": 0.13427640323548454
+  },
+  "MDY": {
+    "breakdown": {
+      "earnings": 0.0,
+      "macro": 0.0,
+      "options": 0.0,
+      "pead": 0.0,
+      "quality": 0.0
+    },
+    "combined_alpha": 0.0,
+    "days_to_earnings": null,
+    "macro_regime": "unknown",
+    "uncertainty": 0.13427640323548454
+  },
+  "MTUM": {
+    "breakdown": {
+      "earnings": 0.0,
+      "macro": 0.0,
+      "options": 0.0,
+      "pead": 0.0,
+      "quality": 0.0
+    },
+    "combined_alpha": 0.0,
+    "days_to_earnings": null,
+    "macro_regime": "unknown",
+    "uncertainty": 0.13427640323548454
+  },
+  "QQQ": {
+    "breakdown": {
+      "earnings": 0.0,
+      "macro": 0.0,
+      "options": 0.0,
+      "pead": 0.0,
+      "quality": 0.0
+    },
+    "combined_alpha": 0.0,
+    "days_to_earnings": null,
+    "macro_regime": "unknown",
+    "uncertainty": 0.13427640323548454
+  },
+  "QUAL": {
+    "breakdown": {
+      "earnings": 0.0,
+      "macro": 0.0,
+      "options": 0.0,
+      "pead": 0.0,
+      "quality": 0.0
+    },
+    "combined_alpha": 0.0,
+    "days_to_earnings": null,
+    "macro_regime": "unknown",
+    "uncertainty": 0.13427640323548454
+  },
+  "SHY": {
+    "breakdown": {
+      "earnings": 0.0,
+      "macro": 0.0,
+      "options": 0.0,
+      "pead": 0.0,
+      "quality": 0.0
+    },
+    "combined_alpha": 0.0,
+    "days_to_earnings": null,
+    "macro_regime": "unknown",
+    "uncertainty": 0.13427640323548454
+  },
+  "SLV": {
+    "breakdown": {
+      "earnings": 0.0,
+      "macro": 0.0,
+      "options": 0.0,
+      "pead": 0.0,
+      "quality": 0.0
+    },
+    "combined_alpha": 0.0,
+    "days_to_earnings": null,
+    "macro_regime": "unknown",
+    "uncertainty": 0.13427640323548454
+  },
+  "SPY": {
+    "breakdown": {
+      "earnings": 0.0,
+      "macro": 0.0,
+      "options": 0.0,
+      "pead": 0.0,
+      "quality": 0.0
+    },
+    "combined_alpha": 0.0,
+    "days_to_earnings": null,
+    "macro_regime": "unknown",
+    "uncertainty": 0.13427640323548454
+  },
+  "TIP": {
+    "breakdown": {
+      "earnings": 0.0,
+      "macro": 0.0,
+      "options": 0.0,
+      "pead": 0.0,
+      "quality": 0.0
+    },
+    "combined_alpha": 0.0,
+    "days_to_earnings": null,
+    "macro_regime": "unknown",
+    "uncertainty": 0.13427640323548454
+  },
+  "TLT": {
+    "breakdown": {
+      "earnings": 0.0,
+      "macro": 0.0,
+      "options": 0.0,
+      "pead": 0.0,
+      "quality": 0.0
+    },
+    "combined_alpha": 0.0,
+    "days_to_earnings": null,
+    "macro_regime": "unknown",
+    "uncertainty": 0.13427640323548454
+  },
+  "USMV": {
+    "breakdown": {
+      "earnings": 0.0,
+      "macro": 0.0,
+      "options": 0.0,
+      "pead": 0.0,
+      "quality": 0.0
+    },
+    "combined_alpha": 0.0,
+    "days_to_earnings": null,
+    "macro_regime": "unknown",
+    "uncertainty": 0.13427640323548454
+  },
+  "USO": {
+    "breakdown": {
+      "earnings": 0.0,
+      "macro": 0.0,
+      "options": 0.0,
+      "pead": 0.0,
+      "quality": 0.0
+    },
+    "combined_alpha": 0.0,
+    "days_to_earnings": null,
+    "macro_regime": "unknown",
+    "uncertainty": 0.13427640323548454
+  },
+  "XLC": {
+    "breakdown": {
+      "earnings": 0.0,
+      "macro": 0.0,
+      "options": 0.0,
+      "pead": 0.0,
+      "quality": 0.0
+    },
+    "combined_alpha": 0.0,
+    "days_to_earnings": null,
+    "macro_regime": "unknown",
+    "uncertainty": 0.13427640323548454
+  },
+  "XLE": {
+    "breakdown": {
+      "earnings": 0.0,
+      "macro": 0.0,
+      "options": 0.0,
+      "pead": 0.0,
+      "quality": 0.0
+    },
+    "combined_alpha": 0.0,
+    "days_to_earnings": null,
+    "macro_regime": "unknown",
+    "uncertainty": 0.13427640323548454
+  },
+  "XLF": {
+    "breakdown": {
+      "earnings": 0.0,
+      "macro": 0.0,
+      "options": 0.0,
+      "pead": 0.0,
+      "quality": 0.0
+    },
+    "combined_alpha": 0.0,
+    "days_to_earnings": null,
+    "macro_regime": "unknown",
+    "uncertainty": 0.13427640323548454
+  },
+  "XLI": {
+    "breakdown": {
+      "earnings": 0.0,
+      "macro": 0.0,
+      "options": 0.0,
+      "pead": 0.0,
+      "quality": 0.0
+    },
+    "combined_alpha": 0.0,
+    "days_to_earnings": null,
+    "macro_regime": "unknown",
+    "uncertainty": 0.13427640323548454
+  },
+  "XLK": {
+    "breakdown": {
+      "earnings": 0.0,
+      "macro": 0.0,
+      "options": 0.0,
+      "pead": 0.0,
+      "quality": 0.0
+    },
+    "combined_alpha": 0.0,
+    "days_to_earnings": null,
+    "macro_regime": "unknown",
+    "uncertainty": 0.13427640323548454
+  },
+  "XLP": {
+    "breakdown": {
+      "earnings": 0.0,
+      "macro": 0.0,
+      "options": 0.0,
+      "pead": 0.0,
+      "quality": 0.0
+    },
+    "combined_alpha": 0.0,
+    "days_to_earnings": null,
+    "macro_regime": "unknown",
+    "uncertainty": 0.13427640323548454
+  },
+  "XLRE": {
+    "breakdown": {
+      "earnings": 0.0,
+      "macro": 0.0,
+      "options": 0.0,
+      "pead": 0.0,
+      "quality": 0.0
+    },
+    "combined_alpha": 0.0,
+    "days_to_earnings": null,
+    "macro_regime": "unknown",
+    "uncertainty": 0.13427640323548454
+  },
+  "XLU": {
+    "breakdown": {
+      "earnings": 0.0,
+      "macro": 0.0,
+      "options": 0.0,
+      "pead": 0.0,
+      "quality": 0.0
+    },
+    "combined_alpha": 0.0,
+    "days_to_earnings": null,
+    "macro_regime": "unknown",
+    "uncertainty": 0.13427640323548454
+  },
+  "XLV": {
+    "breakdown": {
+      "earnings": 0.0,
+      "macro": 0.0,
+      "options": 0.0,
+      "pead": 0.0,
+      "quality": 0.0
+    },
+    "combined_alpha": 0.0,
+    "days_to_earnings": null,
+    "macro_regime": "unknown",
+    "uncertainty": 0.13427640323548454
+  },
+  "XLY": {
+    "breakdown": {
+      "earnings": 0.0,
+      "macro": 0.0,
+      "options": 0.0,
+      "pead": 0.0,
+      "quality": 0.0
+    },
+    "combined_alpha": 0.0,
+    "days_to_earnings": null,
+    "macro_regime": "unknown",
+    "uncertainty": 0.13427640323548454
+  }
+}
