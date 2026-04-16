@@ -4,8 +4,14 @@ from dataclasses import dataclass
 from datetime import date, datetime, timezone
 import hashlib
 import os
+from time import perf_counter
 import pandas as pd
 import requests
+
+from .logging import get_logger
+from .metrics import order_latency_seconds, orders_total
+
+logger = get_logger(__name__)
 
 
 @dataclass
@@ -19,7 +25,7 @@ class PaperBrokerStub:
         run_id: str | None = None,
     ) -> None:
         printable = {k: round(float(v), 4) for k, v in weights.items() if abs(v) > 1e-6}
-        print('Paper order targets:', printable)
+        logger.info("broker.stub_targets", run_id=run_id, targets=printable)
 
 
 @dataclass
@@ -81,9 +87,10 @@ class AlpacaPaperBroker:
 
     def _close_symbol(self, symbol: str) -> None:
         self._request('DELETE', f'/v2/positions/{symbol}')
-        print(f'Closed position: {symbol}')
+        logger.info("broker.closed_position", symbol=symbol)
 
     def _submit_market_order(self, symbol: str, qty: float, side: str, client_order_id: str) -> None:
+        start = perf_counter()
         payload = {
             'symbol': symbol,
             'qty': f'{qty:.6f}',
@@ -93,7 +100,10 @@ class AlpacaPaperBroker:
             'client_order_id': client_order_id[:48],
         }
         self._request('POST', '/v2/orders', json_payload=payload)
-        print(f'Submitted {side}: {symbol} qty={qty:.6f} id={client_order_id[:16]}')
+        elapsed = perf_counter() - start
+        orders_total.labels(broker="alpaca_paper", status="submitted").inc()
+        order_latency_seconds.labels(broker="alpaca_paper").observe(elapsed)
+        logger.info("broker.order_submitted", symbol=symbol, side=side, qty=qty, order_id=client_order_id[:16], latency=elapsed)
 
     @staticmethod
     def _is_us_holiday(today: date) -> bool:
@@ -143,10 +153,10 @@ class AlpacaPaperBroker:
         if self.market_mode == "us":
             today = datetime.now(timezone.utc).date()
             if self._is_us_holiday(today):
-                print("Execution skipped: US holiday gate active.")
+                logger.info("broker.execution_skipped", reason="us_holiday")
                 return
         if not self._market_is_session_open(self.market_mode):
-            print("Execution skipped: market session is closed.")
+            logger.info("broker.execution_skipped", reason="market_closed")
             return
 
         equity = self._account_equity()
@@ -167,11 +177,11 @@ class AlpacaPaperBroker:
             if delta_notional < self.min_order_notional:
                 continue
             if not self._impact_allowed(delta_notional):
-                print(f"Skipped {symbol}: impact/ADV threshold exceeded.")
+                logger.info("broker.order_skipped", symbol=symbol, reason="impact_adv_threshold")
                 continue
             if self.market_mode == "india" and delta_qty < 0:
                 # Conservative compliance mode for India.
-                print(f"Skipped {symbol}: short sell blocked in india compliance mode.")
+                logger.info("broker.order_skipped", symbol=symbol, reason="india_short_blocked")
                 continue
             deltas.append((symbol, delta_qty, delta_notional))
 

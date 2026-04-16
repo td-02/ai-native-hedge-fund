@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import argparse
 import copy
@@ -158,3 +158,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+

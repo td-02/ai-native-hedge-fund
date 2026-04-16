@@ -1,4 +1,4 @@
-import sys, copy
+﻿import sys, copy
 from pathlib import Path
 sys.path.insert(0, str(Path(".").resolve()))
 import pandas as pd
@@ -66,3 +66,4 @@ except:
 print("\n=== INITIAL WEIGHTS FROM CONFIG ===")
 for k,v in sorted(cfg["strategies"]["weights"].items()):
     print(f"  {k}: {v:.4f}")
+

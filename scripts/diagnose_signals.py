@@ -1,4 +1,4 @@
-import sys
+﻿import sys
 from pathlib import Path
 sys.path.insert(0, str(Path('.').resolve()))
 import pandas as pd
@@ -50,3 +50,4 @@ if neg_count >= 2:
     print('\nWARNING: Signal direction sanity check failed - more than 50% of top-3 trend scores have negative 252-day returns.')
 else:
     print('\nSignal direction sanity check passed.')
+

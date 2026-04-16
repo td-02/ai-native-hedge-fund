@@ -1,4 +1,4 @@
-import sys, copy
+﻿import sys, copy
 from pathlib import Path
 sys.path.insert(0, str(Path('.').resolve()))
 import pandas as pd
@@ -32,3 +32,4 @@ print(decision.risk_flags if hasattr(decision, 'risk_flags') else 'No risk_flags
 print('\n=== FULL DECISION ===')
 import json
 print(json.dumps({k: str(v)[:100] for k,v in vars(decision).items()}, indent=2))
+

@@ -30,6 +30,7 @@ from .resilience import BreakerRegistry
 from .strategy_stack import FundManagerAgent, RiskManagerAgent, StrategyEnsembleAgent
 from .tracing import TraceLMLogger
 from .contracts import ResearchSignal
+from .logging import get_logger
 try:
     from advanced_alpha import combine_advanced_alpha  # type: ignore
 except Exception:  # pragma: no cover
@@ -41,6 +42,7 @@ except Exception:  # pragma: no cover
 from probabilistic_core import BayesianPortfolioOptimizer
 
 T = TypeVar("T")
+logger = get_logger(__name__)
 
 
 @dataclass
@@ -51,9 +53,8 @@ class CentralizedHedgeFundSystem:
         system_cfg = self.cfg.get("system", {})
         self.out_dir = Path(system_cfg.get("output_dir", "outputs"))
         self.out_dir.mkdir(parents=True, exist_ok=True)
-        self.audit = AuditLedger(self.out_dir / "audit")
+        self.audit = AuditLedger()
         self.health = HealthMonitor(
-            self.out_dir,
             deadman_timeout_sec=int(self.cfg.get("health", {}).get("deadman_timeout_sec", 900)),
         )
         res_cfg = self.cfg.get("resilience", {})
@@ -141,6 +142,62 @@ class CentralizedHedgeFundSystem:
         self._last_final_weights = pd.Series(dtype=float)
         self._cycle_count = 0
         self._last_rebalance_cycle = -10**9
+
+    def _load_window(self) -> tuple[pd.DataFrame, list[str], str]:
+        pcfg = self.cfg["portfolio"]
+        symbols = list(pcfg["symbols"])
+        lookback_days = int(pcfg["lookback_days"])
+        prices = download_close_prices(
+            symbols=symbols,
+            start_date=pcfg["start_date"],
+            end_date=pcfg["end_date"],
+        )
+        window = prices.tail(lookback_days)
+        if len(window) < 105:
+            raise ValueError("Not enough history for multi-strategy decision.")
+        run_id = self._make_run_id(window)
+        return window, symbols, run_id
+
+    def run_research_stage(self) -> dict:
+        window, symbols, run_id = self._load_window()
+        research = self.research.run(symbols)
+        payload = {
+            "run_id": run_id,
+            "symbols": symbols,
+            "research": {k: v.to_dict() for k, v in research.items()},
+            "window_tail": window.tail(5).to_json(date_format="iso", orient="split"),
+        }
+        self.audit.append("research_stage", run_id, payload)
+        return payload
+
+    def run_strategy_stage(self, research_payload: dict) -> dict:
+        window, symbols, run_id = self._load_window()
+        research = {
+            symbol: ResearchSignal(**value)
+            for symbol, value in (research_payload.get("research", {}) or {}).items()
+        }
+        strategy_scores = self.strategy.run(window, research)
+        combined = self.strategy.weighted_score(strategy_scores)
+        pre_risk = self.fund_manager.run(combined_score=combined)
+        final_weights, risk_flags = self.risk.run(pre_risk, window)
+        payload = {
+            "run_id": run_id,
+            "weights": {k: float(v) for k, v in final_weights.to_dict().items()},
+            "risk_flags": risk_flags,
+        }
+        self.audit.append("strategy_stage", run_id, payload)
+        return payload
+
+    def run_execution_stage(self, weights_payload: dict) -> dict:
+        window, symbols, run_id = self._load_window()
+        weights = pd.Series(weights_payload.get("weights", {}), dtype=float).reindex(symbols).fillna(0.0)
+        broker = self._execution_broker()
+        latest_prices = window.iloc[-1]
+        broker_used = broker.submit_target_weights(weights, latest_prices, run_id=run_id)
+        payload = {"run_id": run_id, "broker": broker_used, "status": "submitted"}
+        self.audit.append("execution_stage", run_id, payload)
+        self.health.beat(run_id, "execution_submitted")
+        return payload
 
     @staticmethod
     def _normalize_weights(weights: dict[str, float]) -> dict[str, float]:

@@ -4,6 +4,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from tracelm.context import generate_span_id, generate_trace_id
+from tracelm.exporters.chrome_exporter import export_trace_to_chrome
+from tracelm.span import Span
+from tracelm.storage.sqlite_store import init_db, save_trace
+from tracelm.trace import Trace
+
 
 @dataclass
 class TraceLMLogger:
@@ -14,35 +20,15 @@ class TraceLMLogger:
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self._traces: dict[str, Any] = {}
         self._spans: dict[tuple[str, str], Any] = {}
-        self._available = False
-
-        if not self.enabled:
-            return
-        try:
-            from tracelm.context import generate_span_id, generate_trace_id
-            from tracelm.exporters.chrome_exporter import export_trace_to_chrome
-            from tracelm.span import Span
-            from tracelm.storage.sqlite_store import init_db, save_trace
-            from tracelm.trace import Trace
-
-            init_db()
-            self._generate_trace_id = generate_trace_id
-            self._generate_span_id = generate_span_id
-            self._export_trace_to_chrome = export_trace_to_chrome
-            self._save_trace = save_trace
-            self._Span = Span
-            self._Trace = Trace
-            self._available = True
-        except Exception:
-            self._available = False
+        init_db()
 
     def start_trace(self, name: str, metadata: dict[str, Any] | None = None) -> tuple[str, str]:
-        if not self._available:
+        if not self.enabled:
             return ("", "")
-        trace_id = self._generate_trace_id()
-        root_span_id = self._generate_span_id()
-        trace = self._Trace(trace_id=trace_id)
-        root = self._Span(
+        trace_id = generate_trace_id()
+        root_span_id = generate_span_id()
+        trace = Trace(trace_id=trace_id)
+        root = Span(
             span_id=root_span_id,
             trace_id=trace_id,
             parent_id=None,
@@ -61,13 +47,13 @@ class TraceLMLogger:
         name: str,
         metadata: dict[str, Any] | None = None,
     ) -> str:
-        if not self._available or not trace_id:
+        if not self.enabled or not trace_id:
             return ""
         trace = self._traces.get(trace_id)
         if trace is None:
             return ""
-        span_id = self._generate_span_id()
-        span = self._Span(
+        span_id = generate_span_id()
+        span = Span(
             span_id=span_id,
             trace_id=trace_id,
             parent_id=parent_span_id or None,
@@ -85,7 +71,7 @@ class TraceLMLogger:
         metadata_update: dict[str, Any] | None = None,
         error: str | None = None,
     ) -> None:
-        if not self._available or not trace_id or not span_id:
+        if not self.enabled or not trace_id or not span_id:
             return
         span = self._spans.get((trace_id, span_id))
         if span is None:
@@ -97,13 +83,14 @@ class TraceLMLogger:
         span.finish()
 
     def finalize_trace(self, trace_id: str, root_span_id: str, metadata_update: dict[str, Any] | None = None) -> None:
-        if not self._available or not trace_id:
+        if not self.enabled or not trace_id:
             return
         self.finish_span(trace_id, root_span_id, metadata_update=metadata_update)
         trace = self._traces.get(trace_id)
         if trace is None:
             return
         trace.validate()
-        self._save_trace(trace)
+        save_trace(trace)
         out_file = self.output_dir / f"trace_{trace_id}.json"
-        self._export_trace_to_chrome(trace, str(out_file))
+        export_trace_to_chrome(trace, str(out_file))
+

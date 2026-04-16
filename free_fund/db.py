@@ -22,8 +22,9 @@ SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, clas
 
 def init_db() -> None:
     Base.metadata.create_all(bind=engine)
-    with engine.begin() as conn:
-        conn.execute(text("CREATE EXTENSION IF NOT EXISTS timescaledb"))
+    if engine.dialect.name == "postgresql":
+        with engine.begin() as conn:
+            conn.execute(text("CREATE EXTENSION IF NOT EXISTS timescaledb"))
 
 
 @contextmanager
@@ -37,4 +38,3 @@ def session_scope() -> Iterator[Session]:
         raise
     finally:
         session.close()
-

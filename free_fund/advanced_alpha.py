@@ -13,6 +13,7 @@ except Exception:  # pragma: no cover
     BlackScholes = None  # type: ignore
     BayesianSignalAggregator = None  # type: ignore
 from llm_router import llm_chat
+from .flags import feature_enabled
 
 
 def _zscore(series: pd.Series) -> pd.Series:
@@ -274,7 +275,8 @@ class CrossAssetArbitrageAgents:
     """Arbitrage layer with deterministic proxies for markets lacking full feeds."""
 
     def nse_bse_price_arb(self, prices: pd.DataFrame) -> pd.Series:
-        # Placeholder for cross-exchange same-asset spread; zero unless dedicated feeds added.
+        if not feature_enabled("nse_bse_price_arb"):
+            return pd.Series(0.0, index=prices.columns)
         return pd.Series(0.0, index=prices.columns)
 
     def cash_futures_basis(self, prices: pd.DataFrame) -> pd.Series:
@@ -289,7 +291,8 @@ class CrossAssetArbitrageAgents:
         return _zscore(-prem)
 
     def adr_arb(self, prices: pd.DataFrame) -> pd.Series:
-        # Placeholder until ADR/local mapping is provided.
+        if not feature_enabled("adr_arb"):
+            return pd.Series(0.0, index=prices.columns)
         return pd.Series(0.0, index=prices.columns)
 
     def run(self, prices: pd.DataFrame) -> dict[str, pd.Series]:
@@ -318,7 +321,8 @@ class MacroIntelligenceAgents:
             return 0.0
 
     def rbi_policy_agent(self) -> float:
-        # Placeholder policy stance score.
+        if not feature_enabled("rbi_policy_agent"):
+            return 0.0
         return 0.0
 
     def global_carry(self) -> float:
@@ -369,12 +373,18 @@ class MicrostructureAgents:
     """Real-time microstructure placeholders for future tick/order-book feeds."""
 
     def order_book_agent(self, symbols: list[str]) -> pd.Series:
+        if not feature_enabled("order_book_agent"):
+            return pd.Series(0.0, index=symbols)
         return pd.Series(0.0, index=symbols)
 
     def tape_reading(self, symbols: list[str]) -> pd.Series:
+        if not feature_enabled("tape_reading"):
+            return pd.Series(0.0, index=symbols)
         return pd.Series(0.0, index=symbols)
 
     def latency_arb(self, symbols: list[str]) -> pd.Series:
+        if not feature_enabled("latency_arb"):
+            return pd.Series(0.0, index=symbols)
         return pd.Series(0.0, index=symbols)
 
     def flash_crash_detector(self, prices: pd.DataFrame) -> bool:
