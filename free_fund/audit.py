@@ -20,6 +20,16 @@ class AuditLedger:
     def __post_init__(self) -> None:
         Base.metadata.create_all(bind=engine)
 
+    @staticmethod
+    def _canonical_timestamp(value: datetime) -> str:
+        """
+        Canonicalize timestamps before hashing so DB timezone round-trips
+        (especially SQLite) do not break hash verification.
+        """
+        if value.tzinfo is not None:
+            value = value.astimezone(timezone.utc).replace(tzinfo=None)
+        return value.isoformat(timespec="microseconds")
+
     def _last_hash(self, session: Session) -> str:
         stmt = select(AuditEvent.event_hash).order_by(AuditEvent.id.desc()).limit(1)
         row = session.execute(stmt).scalar_one_or_none()
@@ -28,10 +38,11 @@ class AuditLedger:
     def append(self, event_type: str, run_id: str, payload: dict[str, Any]) -> str:
         with self.session_factory() as session:
             prev_hash = self._last_hash(session)
+            now_utc = datetime.now(timezone.utc)
             body = {
                 "event_type": event_type,
                 "run_id": run_id,
-                "timestamp_utc": datetime.now(timezone.utc).isoformat(),
+                "timestamp_utc": self._canonical_timestamp(now_utc),
                 "payload": payload,
                 "prev_hash": prev_hash,
             }
@@ -42,7 +53,7 @@ class AuditLedger:
                 event_hash=event_hash,
                 prev_hash=prev_hash,
                 payload=payload,
-                timestamp_utc=datetime.fromisoformat(body["timestamp_utc"]),
+                timestamp_utc=now_utc,
             )
             session.add(event)
             session.commit()
@@ -57,7 +68,7 @@ class AuditLedger:
                 body = {
                     "event_type": event.event_type,
                     "run_id": event.run_id,
-                    "timestamp_utc": event.timestamp_utc.isoformat(),
+                    "timestamp_utc": self._canonical_timestamp(event.timestamp_utc),
                     "payload": event.payload,
                     "prev_hash": event.prev_hash,
                 }
