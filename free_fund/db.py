@@ -13,7 +13,7 @@ from .models import Base
 def database_url() -> str:
     settings = load_settings()
     db_cfg = settings.model_dump().get("database", {})
-    return str(db_cfg.get("url", "postgresql+psycopg://postgres:postgres@localhost:5432/ainhf"))
+    return str(db_cfg.get("url", "sqlite+pysqlite:///outputs/ainhf.db"))
 
 
 engine = create_engine(database_url(), future=True, pool_pre_ping=True)
