@@ -1,6 +1,4 @@
 ﻿import sys, copy
-from pathlib import Path
-sys.path.insert(0, str(Path(".").resolve()))
 import pandas as pd
 import numpy as np
 from free_fund.config import load_config
@@ -66,4 +64,5 @@ except:
 print("\n=== INITIAL WEIGHTS FROM CONFIG ===")
 for k,v in sorted(cfg["strategies"]["weights"].items()):
     print(f"  {k}: {v:.4f}")
+
 

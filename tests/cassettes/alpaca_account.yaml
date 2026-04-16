@@ -1,0 +1,17 @@
+interactions:
+- request:
+    body: null
+    headers: {}
+    method: GET
+    uri: https://paper-api.alpaca.markets/v2/account
+  response:
+    body:
+      string: '{"id":"acc-1","portfolio_value":"100000","equity":"100000"}'
+    headers:
+      Content-Type:
+      - application/json
+    status:
+      code: 200
+      message: OK
+version: 1
+

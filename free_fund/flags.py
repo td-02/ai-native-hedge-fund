@@ -12,7 +12,9 @@ def _redis_client() -> redis.Redis:
 
 
 def feature_enabled(flag: str) -> bool:
-    client = _redis_client()
-    value = client.get(f"ainhf:flags:{flag}")
-    return str(value).lower() in {"1", "true", "on", "yes", "enabled"}
-
+    try:
+        client = _redis_client()
+        value = client.get(f"ainhf:flags:{flag}")
+        return str(value).lower() in {"1", "true", "on", "yes", "enabled"}
+    except Exception:
+        return False

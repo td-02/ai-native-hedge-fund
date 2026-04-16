@@ -1,6 +1,4 @@
 ﻿import sys
-from pathlib import Path
-sys.path.insert(0, str(Path(".").resolve()))
 
 import inspect
 import subprocess
@@ -64,5 +62,6 @@ for sym, val in combined.sort_values(ascending=False).items():
 print(f"\nQQQ should be strongly positive. If it is, the bug is in the ORCHESTRATOR's")
 print(f"call to agent.run() â€” it may be passing a DIFFERENT window that produces")
 print(f"different per-strategy scores than the standalone diagnostic.")
+
 
 

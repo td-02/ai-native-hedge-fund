@@ -342,7 +342,13 @@ class CentralizedHedgeFundSystem:
             s = series.reindex(symbols).fillna(0.0)
             focus = ["QQQ", "XLK", "SPY", "IWM", "TLT", "GLD", "XLE", "XLV", "MTUM"]
             vals = " ".join(f"{k}:{float(s.get(k, 0.0)):+.4f}" for k in focus if k in s.index)
-            print(f"[TRACE] {label} gross={float(s.abs().sum()):.4f} net={float(s.sum()):+.4f} {vals}")
+            logger.info(
+                "orchestrator.trace",
+                label=label,
+                gross=float(s.abs().sum()),
+                net=float(s.sum()),
+                values=vals,
+            )
 
         def _check_score_integrity(score: pd.Series, label: str, reference_score: pd.Series | None) -> None:
             if reference_score is None:
@@ -353,7 +359,7 @@ class CentralizedHedgeFundSystem:
             if not np.isfinite(corr):
                 corr = 1.0
             if debug_trace:
-                print(f"[SCORE INTEGRITY] {label}: correlation={corr:.3f}")
+                logger.info("orchestrator.score_integrity", label=label, correlation=corr)
             if corr < 0.5:
                 warnings.warn(
                     f"[SCORE INTEGRITY] {label}: correlation with pre-blend score = {corr:.3f} < 0.5. "
@@ -444,13 +450,16 @@ class CentralizedHedgeFundSystem:
         if debug_trace and len(window) > 0:
             start_dt = window.index[0]
             end_dt = window.index[-1]
-            print(f"[DEBUG] window shape: {window.shape}, date range: {start_dt} to {end_dt}")
+            logger.info("orchestrator.window_debug", shape=window.shape, start=str(start_dt), end=str(end_dt))
             if "QQQ" in window.columns and "IWM" in window.columns:
-                print(f"[DEBUG] window last row QQQ: {float(window['QQQ'].iloc[-1]):.2f}, IWM: {float(window['IWM'].iloc[-1]):.2f}")
+                logger.info(
+                    "orchestrator.window_last_row",
+                    qqq=float(window["QQQ"].iloc[-1]),
+                    iwm=float(window["IWM"].iloc[-1]),
+                )
                 qqq_252 = window["QQQ"].pct_change(252).iloc[-1] if len(window) > 252 else float("nan")
                 iwm_252 = window["IWM"].pct_change(252).iloc[-1] if len(window) > 252 else float("nan")
-                print(f"[DEBUG] QQQ 252d return in window: {qqq_252:.3f}")
-                print(f"[DEBUG] IWM 252d return in window: {iwm_252:.3f}")
+                logger.info("orchestrator.window_252d", qqq_252=float(qqq_252), iwm_252=float(iwm_252))
 
         strategy_scores = self._stage_call(
             "strategy",
@@ -559,7 +568,7 @@ class CentralizedHedgeFundSystem:
             }
             w_override = self._normalize_weights(blended)
         if debug_trace:
-            print(f"[DEBUG] weight_overrides passed to weighted_score: {w_override}")
+            logger.info("orchestrator.weight_overrides", value=w_override)
         combined = self.strategy.weighted_score(strategy_scores, weight_overrides=w_override) * regime_snapshot.risk_multiplier
         _dbg("combined_score", combined)
 

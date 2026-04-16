@@ -1,6 +1,4 @@
 ﻿import sys
-from pathlib import Path
-sys.path.insert(0, str(Path('.').resolve()))
 import pandas as pd
 import numpy as np
 from free_fund.config import load_config
@@ -84,4 +82,5 @@ delta = final_w - fm_weights.reindex(final_w.index).fillna(0.0)
 for sym, val in delta.sort_values(ascending=False).items():
     if abs(val) > 0.01:
         print(f'  {sym}: {val:+.4f}  (FM={fm_weights.get(sym,0):+.4f} -> Final={final_w[sym]:+.4f})')
+
 
