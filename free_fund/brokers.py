@@ -22,11 +22,20 @@ class BrokerAdapter(ABC):
     ) -> None:
         raise NotImplementedError
 
+    @staticmethod
+    def _target_quantities(weights: pd.Series, latest_prices: pd.Series, capital: float) -> pd.Series:
+        aligned_prices = latest_prices.reindex(weights.index).astype(float)
+        aligned_prices = aligned_prices.where(aligned_prices > 0.0).dropna()
+        aligned_weights = weights.reindex(aligned_prices.index).fillna(0.0).astype(float)
+        target = (aligned_weights * float(capital)) / aligned_prices
+        return target.replace([float("inf"), float("-inf")], 0.0).fillna(0.0)
+
 
 @dataclass
 class ZerodhaAdapter(BrokerAdapter):
     api_key: str
     access_token: str
+    capital: float = 100_000.0
 
     def __post_init__(self) -> None:
         try:
@@ -42,8 +51,31 @@ class ZerodhaAdapter(BrokerAdapter):
         latest_prices: pd.Series | None = None,
         run_id: str | None = None,
     ) -> None:
-        logger.info("zerodha.submit_target_weights", run_id=run_id, n_assets=int(len(weights)))
-        # Integration placeholder: mapping target weights to broker-specific order APIs.
+        if latest_prices is None:
+            raise ValueError("latest_prices is required for ZerodhaAdapter")
+        positions_resp = self.client.positions() or {}
+        net_positions = positions_resp.get("net", []) if isinstance(positions_resp, dict) else []
+        current_qty = {
+            str(p.get("tradingsymbol", "")): float(p.get("quantity", 0.0))
+            for p in net_positions
+            if str(p.get("tradingsymbol", ""))
+        }
+        target_qty = self._target_quantities(weights, latest_prices, capital=self.capital)
+        for symbol, tgt in target_qty.items():
+            delta = int(round(float(tgt) - float(current_qty.get(symbol, 0.0))))
+            if delta == 0:
+                continue
+            side = "BUY" if delta > 0 else "SELL"
+            self.client.place_order(
+                variety="regular",
+                exchange="NSE",
+                tradingsymbol=str(symbol),
+                transaction_type=side,
+                quantity=abs(delta),
+                product="CNC",
+                order_type="MARKET",
+            )
+            logger.info("zerodha.order_submitted", run_id=run_id, symbol=symbol, side=side, qty=abs(delta))
 
 
 @dataclass
@@ -52,6 +84,8 @@ class AngelOneAdapter(BrokerAdapter):
     client_id: str
     password: str
     totp_token: str | None = None
+    capital: float = 100_000.0
+    symbol_token_map: dict[str, str] | None = None
 
     def __post_init__(self) -> None:
         try:
@@ -66,8 +100,39 @@ class AngelOneAdapter(BrokerAdapter):
         latest_prices: pd.Series | None = None,
         run_id: str | None = None,
     ) -> None:
-        logger.info("angelone.submit_target_weights", run_id=run_id, n_assets=int(len(weights)))
-        # Integration placeholder: mapping target weights to broker-specific order APIs.
+        if latest_prices is None:
+            raise ValueError("latest_prices is required for AngelOneAdapter")
+        token_map = self.symbol_token_map or {}
+        positions = self.client.position() or {}
+        pos_data = positions.get("data", []) if isinstance(positions, dict) else []
+        current_qty = {
+            str(p.get("tradingsymbol", "")): float(p.get("netqty", 0.0))
+            for p in pos_data
+            if str(p.get("tradingsymbol", ""))
+        }
+        target_qty = self._target_quantities(weights, latest_prices, capital=self.capital)
+        for symbol, tgt in target_qty.items():
+            symbol_token = token_map.get(symbol)
+            if not symbol_token:
+                logger.warning("angelone.token_missing", symbol=symbol, run_id=run_id)
+                continue
+            delta = int(round(float(tgt) - float(current_qty.get(symbol, 0.0))))
+            if delta == 0:
+                continue
+            side = "BUY" if delta > 0 else "SELL"
+            order = {
+                "variety": "NORMAL",
+                "tradingsymbol": str(symbol),
+                "symboltoken": str(symbol_token),
+                "transactiontype": side,
+                "exchange": "NSE",
+                "ordertype": "MARKET",
+                "producttype": "DELIVERY",
+                "duration": "DAY",
+                "quantity": abs(delta),
+            }
+            self.client.placeOrder(order)
+            logger.info("angelone.order_submitted", run_id=run_id, symbol=symbol, side=side, qty=abs(delta))
 
 
 @dataclass
@@ -113,7 +178,11 @@ def _adapter_from_name(name: str, ecfg: dict[str, Any]) -> BrokerAdapter | None:
         key = str(ecfg.get("kite_api_key", ""))
         token = str(ecfg.get("kite_access_token", ""))
         if key and token:
-            return ZerodhaAdapter(api_key=key, access_token=token)
+            return ZerodhaAdapter(
+                api_key=key,
+                access_token=token,
+                capital=float(ecfg.get("target_capital", 100_000.0)),
+            )
         logger.warning("broker.zerodha_missing_credentials")
         return None
     if name == "angel_one":
@@ -126,6 +195,8 @@ def _adapter_from_name(name: str, ecfg: dict[str, Any]) -> BrokerAdapter | None:
                 client_id=cid,
                 password=pwd,
                 totp_token=str(ecfg.get("angel_totp_token", "")) or None,
+                capital=float(ecfg.get("target_capital", 100_000.0)),
+                symbol_token_map=dict(ecfg.get("angel_symbol_token_map", {}) or {}),
             )
         logger.warning("broker.angelone_missing_credentials")
         return None
@@ -149,4 +220,3 @@ def build_broker_router(cfg: dict) -> BrokerRouter:
     if not clients:
         clients = [PaperBrokerStub()]
     return BrokerRouter(clients=clients)
-
