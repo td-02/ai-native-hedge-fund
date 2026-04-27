@@ -63,8 +63,8 @@ microstructure:
   enabled: true
 
 research_council:
-  enabled: false
-  blend_weight: 0.0
+  enabled: true
+  blend_weight: 0.10
   max_rounds: 2
   request_timeout_sec: 8
 
