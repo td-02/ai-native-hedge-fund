@@ -277,7 +277,23 @@ class CrossAssetArbitrageAgents:
     def nse_bse_price_arb(self, prices: pd.DataFrame) -> pd.Series:
         if not feature_enabled("nse_bse_price_arb"):
             return pd.Series(0.0, index=prices.columns)
-        return pd.Series(0.0, index=prices.columns)
+        out = pd.Series(0.0, index=prices.columns, dtype=float)
+        for symbol in prices.columns:
+            if symbol.endswith(".NS"):
+                peer = symbol.replace(".NS", ".BO")
+            elif symbol.endswith(".BO"):
+                peer = symbol.replace(".BO", ".NS")
+            else:
+                continue
+            if peer not in prices.columns:
+                continue
+            spread = (prices[symbol] / prices[peer]).replace([np.inf, -np.inf], np.nan).dropna()
+            if len(spread) < 20:
+                continue
+            z = (spread.iloc[-1] - spread.tail(20).mean()) / max(1e-12, spread.tail(20).std(ddof=0))
+            out.loc[symbol] = float(-z)
+            out.loc[peer] = float(z)
+        return _zscore(out)
 
     def cash_futures_basis(self, prices: pd.DataFrame) -> pd.Series:
         # Proxy: short-term vs medium-term return spread.
@@ -293,7 +309,23 @@ class CrossAssetArbitrageAgents:
     def adr_arb(self, prices: pd.DataFrame) -> pd.Series:
         if not feature_enabled("adr_arb"):
             return pd.Series(0.0, index=prices.columns)
-        return pd.Series(0.0, index=prices.columns)
+        rets = prices.pct_change().dropna()
+        if rets.empty:
+            return pd.Series(0.0, index=prices.columns)
+        market = rets.mean(axis=1)
+        out: dict[str, float] = {}
+        for s in prices.columns:
+            sr = rets[s].dropna()
+            aligned = pd.concat([sr, market], axis=1).dropna()
+            if len(aligned) < 20:
+                out[s] = 0.0
+                continue
+            x = aligned.iloc[:, 1]
+            y = aligned.iloc[:, 0]
+            beta = float(np.cov(y, x, ddof=0)[0, 1] / (np.var(x, ddof=0) + 1e-12))
+            residual = y - beta * x
+            out[s] = float(-residual.tail(5).mean())
+        return _zscore(pd.Series(out, dtype=float))
 
     def run(self, prices: pd.DataFrame) -> dict[str, pd.Series]:
         return {
@@ -323,7 +355,15 @@ class MacroIntelligenceAgents:
     def rbi_policy_agent(self) -> float:
         if not feature_enabled("rbi_policy_agent"):
             return 0.0
-        return 0.0
+        try:
+            # Rate slope proxy: rising long-end minus short-end implies tighter stance.
+            y10 = self._safe_close("^TNX")
+            y2 = self._safe_close("^IRX")
+            if y10 <= 0 or y2 <= 0:
+                return 0.0
+            return float((y10 - y2) / 100.0)
+        except Exception:
+            return 0.0
 
     def global_carry(self) -> float:
         us10y = self._safe_close("^TNX")
@@ -375,17 +415,55 @@ class MicrostructureAgents:
     def order_book_agent(self, symbols: list[str]) -> pd.Series:
         if not feature_enabled("order_book_agent"):
             return pd.Series(0.0, index=symbols)
-        return pd.Series(0.0, index=symbols)
+        out: dict[str, float] = {}
+        for s in symbols:
+            try:
+                hist = yf.download(s, period="10d", auto_adjust=True, progress=False)
+                if hist.empty or "High" not in hist or "Low" not in hist or "Close" not in hist:
+                    out[s] = 0.0
+                    continue
+                close = float(hist["Close"].iloc[-1])
+                high = float(hist["High"].tail(5).max())
+                low = float(hist["Low"].tail(5).min())
+                depth_proxy = (close - low) / max(1e-12, high - low) - 0.5
+                out[s] = float(depth_proxy)
+            except Exception:
+                out[s] = 0.0
+        return _zscore(pd.Series(out, dtype=float))
 
     def tape_reading(self, symbols: list[str]) -> pd.Series:
         if not feature_enabled("tape_reading"):
             return pd.Series(0.0, index=symbols)
-        return pd.Series(0.0, index=symbols)
+        out: dict[str, float] = {}
+        for s in symbols:
+            try:
+                hist = yf.download(s, period="20d", auto_adjust=True, progress=False)
+                if hist.empty or "Close" not in hist:
+                    out[s] = 0.0
+                    continue
+                close = hist["Close"].astype(float).dropna()
+                out[s] = float(close.pct_change().tail(3).mean() - close.pct_change().tail(10).mean())
+            except Exception:
+                out[s] = 0.0
+        return _zscore(pd.Series(out, dtype=float))
 
     def latency_arb(self, symbols: list[str]) -> pd.Series:
         if not feature_enabled("latency_arb"):
             return pd.Series(0.0, index=symbols)
-        return pd.Series(0.0, index=symbols)
+        out: dict[str, float] = {}
+        for s in symbols:
+            try:
+                hist = yf.download(s, period="15d", auto_adjust=True, progress=False)
+                if hist.empty or "Close" not in hist:
+                    out[s] = 0.0
+                    continue
+                c = hist["Close"].astype(float).dropna()
+                lead = float(c.pct_change(1).iloc[-1]) if len(c) > 1 else 0.0
+                lag = float(c.pct_change(2).iloc[-1]) if len(c) > 2 else lead
+                out[s] = lead - lag
+            except Exception:
+                out[s] = 0.0
+        return _zscore(pd.Series(out, dtype=float))
 
     def flash_crash_detector(self, prices: pd.DataFrame) -> bool:
         returns = prices.pct_change().dropna()
