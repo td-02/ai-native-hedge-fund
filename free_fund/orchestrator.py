@@ -32,6 +32,7 @@ from .tracing import TraceLMLogger
 from .contracts import ResearchSignal
 from .logging import get_logger
 from .services import run_execution_stage as svc_run_execution_stage
+from .services import run_decision_pipeline as svc_run_decision_pipeline
 from .services import run_research_stage as svc_run_research_stage
 from .services import run_strategy_stage as svc_run_strategy_stage
 try:
@@ -277,6 +278,10 @@ class CentralizedHedgeFundSystem:
         return RegimeSnapshot(regime="trend", confidence=0.7, leverage_cap=3.0, risk_multiplier=1.0)
 
     def run_cycle(self, execute: bool = False, prices_override: pd.DataFrame | None = None) -> DecisionCycle:
+        pipeline_mode = bool(self.cfg.get("runtime", {}).get("pipeline_mode", True))
+        if pipeline_mode and prices_override is None:
+            return svc_run_decision_pipeline(self.cfg, execute=execute)
+
         pcfg = self.cfg["portfolio"]
         symbols = list(pcfg["symbols"])
         lookback_days = int(pcfg["lookback_days"])
