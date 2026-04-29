@@ -3,12 +3,18 @@ from __future__ import annotations
 from dataclasses import dataclass
 import json
 from typing import Any, TypedDict
+import re
 
 import feedparser
 from langgraph.graph import END, START, StateGraph
 import pandas as pd
 import requests
 import yfinance as yf
+from requests.exceptions import RequestException
+
+from .logging import get_logger
+
+logger = get_logger(__name__)
 
 
 class CouncilState(TypedDict, total=False):
@@ -27,6 +33,9 @@ class LLMResearchCouncil:
     ollama_url: str = "http://localhost:11434/api/generate"
     max_rounds: int = 2
     request_timeout_sec: int = 8
+
+    def __post_init__(self) -> None:
+        self._resolved_model: str | None = None
 
     def _tool_price_snapshot(self, symbol: str) -> dict[str, float]:
         try:
@@ -53,6 +62,7 @@ class LLMResearchCouncil:
     def _ask(self, role: str, symbol: str, tool_context: dict[str, Any], notes: str = "") -> dict[str, Any]:
         if not self.enable:
             return {"conviction": 0.0, "summary": "disabled"}
+        model = self._resolve_model()
         prompt = {
             "role": role,
             "symbol": symbol,
@@ -60,17 +70,78 @@ class LLMResearchCouncil:
             "notes": notes,
             "output": {"conviction": "float[-1,1]", "summary": "short text"},
         }
-        payload = {"model": self.ollama_model, "prompt": json.dumps(prompt), "stream": False, "format": "json"}
+        payload = {
+            "model": model,
+            "prompt": json.dumps(prompt),
+            "stream": False,
+            "format": "json",
+            "options": {"temperature": 0.1, "num_predict": 200},
+        }
+        timeout = max(15, int(self.request_timeout_sec))
+        last_err = ""
+        for attempt in range(2):
+            try:
+                r = requests.post(self.ollama_url, json=payload, timeout=timeout)
+                r.raise_for_status()
+                raw = r.json().get("response", "{}")
+                out = self._extract_json(raw)
+                return {
+                    "conviction": float(max(-1.0, min(1.0, out.get("conviction", 0.0)))),
+                    "summary": str(out.get("summary", "na")),
+                }
+            except Exception as exc:
+                last_err = str(exc)
+                continue
+        logger.warning(
+            "research_council.fallback",
+            role=role,
+            symbol=symbol,
+            model=model,
+            error=last_err[:280],
+        )
+        return {"conviction": 0.0, "summary": f"fallback:{last_err[:120]}"}
+
+    def _resolve_model(self) -> str:
+        if self._resolved_model:
+            return self._resolved_model
         try:
-            r = requests.post(self.ollama_url, json=payload, timeout=self.request_timeout_sec)
+            base = self.ollama_url.replace("/api/generate", "/api/tags")
+            r = requests.get(base, timeout=5)
             r.raise_for_status()
-            out = json.loads(r.json().get("response", "{}"))
-            return {
-                "conviction": float(max(-1.0, min(1.0, out.get("conviction", 0.0)))),
-                "summary": str(out.get("summary", "na")),
-            }
+            models = [str(m.get("name", "")) for m in (r.json().get("models", []) or []) if m.get("name")]
+            if self.ollama_model in models:
+                self._resolved_model = self.ollama_model
+                return self._resolved_model
+            if models:
+                self._resolved_model = models[0]
+                logger.info(
+                    "research_council.model_fallback",
+                    requested=self.ollama_model,
+                    selected=self._resolved_model,
+                )
+                return self._resolved_model
+        except RequestException as exc:
+            logger.warning("research_council.model_resolve_failed", error=str(exc))
+        self._resolved_model = self.ollama_model
+        return self._resolved_model
+
+    @staticmethod
+    def _extract_json(raw: Any) -> dict[str, Any]:
+        if isinstance(raw, dict):
+            return raw
+        text = str(raw or "").strip()
+        if not text:
+            return {}
+        try:
+            return json.loads(text)
         except Exception:
-            return {"conviction": 0.0, "summary": "fallback"}
+            match = re.search(r"\{.*\}", text, flags=re.S)
+            if not match:
+                return {}
+            try:
+                return json.loads(match.group(0))
+            except Exception:
+                return {}
 
     def _build_graph(self):
         graph = StateGraph(CouncilState)
@@ -135,4 +206,3 @@ class LLMResearchCouncil:
             }
             scores[symbol] = synth
         return pd.Series(scores, dtype=float), details
-

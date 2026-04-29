@@ -21,7 +21,7 @@ risk:
 agent:
   enable_ollama_overlay: false
   enable_llm_research: true
-  ollama_model: llama3.1:8b
+  ollama_model: llama3:latest
   ollama_url: http://localhost:11434/api/generate
   max_headlines: 8
   max_news_age_minutes: 15
@@ -65,8 +65,8 @@ microstructure:
 research_council:
   enabled: true
   blend_weight: 0.10
-  max_rounds: 2
-  request_timeout_sec: 8
+  max_rounds: 1
+  request_timeout_sec: 90
 
 learning:
   enabled: true

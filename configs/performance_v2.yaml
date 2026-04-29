@@ -77,6 +77,8 @@ microstructure:
 research_council:
   enabled: true
   blend_weight: 0.10
+  max_rounds: 1
+  request_timeout_sec: 90
 
 learning:
   enabled: false
