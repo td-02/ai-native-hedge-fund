@@ -80,21 +80,28 @@ class ResearchAgent:
             from langchain_core.prompts import ChatPromptTemplate
             from langchain_core.runnables import RunnableLambda
 
-            prompt = ChatPromptTemplate.from_template(
-                "Return strict JSON with keys sentiment (-1..1), confidence (0..1), summary (<=35 words). "
-                "Ticker: {symbol}. Headlines: {headlines}"
+            # Small local models echo the input when the schema is only mentioned inline, so the
+            # instruction goes in the system message and the prompt carries just the headlines.
+            instruction = (
+                "You are a sell-side research analyst. Read the headlines for the ticker and respond with ONLY a "
+                'JSON object of the form {"sentiment": <number between -1 and 1>, "confidence": <number between 0 and 1>, '
+                '"summary": "<at most 35 words>"}. Do not repeat the headlines.'
             )
+            prompt = ChatPromptTemplate.from_template("Ticker: {symbol}. Headlines: {headlines}")
 
             def render(inp: dict[str, Any]) -> str:
-                return prompt.invoke(inp).to_string()
+                titles = [str(h.get("title", "")) for h in inp["headlines"]]
+                return prompt.invoke({"symbol": inp["symbol"], "headlines": titles}).to_string()
 
             def call_ollama(rendered_prompt: str) -> str:
                 def _call() -> str:
                     payload = {
                         "model": self.ollama_model,
+                        "system": instruction,
                         "prompt": rendered_prompt,
                         "stream": False,
                         "format": "json",
+                        "options": {"temperature": 0.1},
                     }
                     resp = requests.post(self.ollama_url, json=payload, timeout=20)
                     resp.raise_for_status()
@@ -108,6 +115,8 @@ class ResearchAgent:
 
             def parse_json(raw: str) -> dict[str, Any]:
                 parsed = json.loads(raw)
+                if not isinstance(parsed, dict) or "sentiment" not in parsed:
+                    raise ValueError(f"LLM reply without sentiment: {str(raw)[:120]}")
                 return {
                     "sentiment": float(parsed.get("sentiment", 0.0)),
                     "confidence": float(parsed.get("confidence", 0.5)),

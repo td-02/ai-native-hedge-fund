@@ -63,15 +63,19 @@ class LLMResearchCouncil:
         if not self.enable:
             return {"conviction": 0.0, "summary": "disabled"}
         model = self._resolve_model()
-        prompt = {
-            "role": role,
-            "symbol": symbol,
-            "tool_context": tool_context,
-            "notes": notes,
-            "output": {"conviction": "float[-1,1]", "summary": "short text"},
-        }
+        # A bare JSON blob makes small local models echo the input (and run into the token cap),
+        # so the instruction lives in the system message and the prompt carries only the evidence.
+        instruction = (
+            f"You are the {role.replace('_', ' ')} on a multi-agent investment research council reviewing {symbol}. "
+            "Use the tool_context (recent price snapshot and headlines) and the notes from the previous agent. "
+            'Respond with ONLY a JSON object of the form {"conviction": <number between -1 and 1, '
+            'negative = bearish, positive = bullish>, "summary": "<one sentence, at most 30 words>"}. '
+            "Do not repeat the input."
+        )
+        prompt = {"symbol": symbol, "tool_context": tool_context, "notes": notes}
         payload = {
             "model": model,
+            "system": instruction,
             "prompt": json.dumps(prompt),
             "stream": False,
             "format": "json",
@@ -85,6 +89,10 @@ class LLMResearchCouncil:
                 r.raise_for_status()
                 raw = r.json().get("response", "{}")
                 out = self._extract_json(raw)
+                if isinstance(out.get("output"), dict):
+                    out = out["output"]
+                if "conviction" not in out:
+                    raise ValueError(f"council reply without conviction: {str(raw)[:120]}")
                 return {
                     "conviction": float(max(-1.0, min(1.0, out.get("conviction", 0.0)))),
                     "summary": str(out.get("summary", "na")),

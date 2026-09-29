@@ -1,0 +1,281 @@
+{
+  "council_calls": [
+    {
+      "conviction": 0.2,
+      "latency_ms": 3003.424459020607,
+      "model": "llama3.1:8b",
+      "role": "researcher",
+      "served_by_llm": true,
+      "summary": "SPY is slightly bullish due to recent price stability and positive market sentiment, despite some sector-specific volatility.",
+      "symbol": "SPY"
+    },
+    {
+      "conviction": 0.6,
+      "latency_ms": 3890.831624972634,
+      "model": "llama3.1:8b",
+      "role": "news_analyst",
+      "served_by_llm": true,
+      "summary": "SPY remains slightly bullish due to recent price stability and positive market sentiment, despite sector-specific volatility.",
+      "symbol": "SPY"
+    },
+    {
+      "conviction": 0.7,
+      "latency_ms": 3010.537458001636,
+      "model": "llama3.1:8b",
+      "role": "peer_reviewer",
+      "served_by_llm": true,
+      "summary": "SPY remains slightly bullish due to recent price stability and positive market sentiment.",
+      "symbol": "SPY"
+    },
+    {
+      "conviction": 0.3,
+      "latency_ms": 3211.2703340826556,
+      "model": "llama3.1:8b",
+      "role": "researcher",
+      "served_by_llm": true,
+      "summary": "QQQ is neutral, with a slight bullish bias due to recent price recovery and positive headlines, but volatility remains a concern.",
+      "symbol": "QQQ"
+    },
+    {
+      "conviction": 0.4,
+      "latency_ms": 3386.728416895494,
+      "model": "llama3.1:8b",
+      "role": "news_analyst",
+      "served_by_llm": true,
+      "summary": "QQQ maintains a neutral stance with a slight bullish bias, driven by recent price recovery and positive headlines.",
+      "symbol": "QQQ"
+    },
+    {
+      "conviction": 0.6,
+      "latency_ms": 3229.4666250236332,
+      "model": "llama3.1:8b",
+      "role": "peer_reviewer",
+      "served_by_llm": true,
+      "summary": "QQQ maintains a neutral stance with a slight bullish bias, driven by recent price recovery and positive headlines.",
+      "symbol": "QQQ"
+    },
+    {
+      "conviction": -0.5,
+      "latency_ms": 3447.1190420445055,
+      "model": "llama3.1:8b",
+      "role": "researcher",
+      "served_by_llm": true,
+      "summary": "IWM's recent price decline and bearish headlines suggest a cautious approach, but not a strong sell signal.",
+      "symbol": "IWM"
+    },
+    {
+      "conviction": 0.2,
+      "latency_ms": 4223.674208042212,
+      "model": "llama3.1:8b",
+      "role": "news_analyst",
+      "served_by_llm": true,
+      "summary": "IWM's price decline and bearish headlines warrant caution, but a strong sell signal is not indicated.",
+      "symbol": "IWM"
+    },
+    {
+      "conviction": 0.2,
+      "latency_ms": 3395.8783339476213,
+      "model": "llama3.1:8b",
+      "role": "peer_reviewer",
+      "served_by_llm": true,
+      "summary": "IWM's price decline and bearish headlines warrant caution, but a neutral stance is maintained.",
+      "symbol": "IWM"
+    },
+    {
+      "conviction": -0.8,
+      "latency_ms": 3312.6572920009494,
+      "model": "llama3.1:8b",
+      "role": "researcher",
+      "served_by_llm": true,
+      "summary": "TLT is down significantly from its peak, but soaring yields and bond massacre headlines suggest a bearish outlook.",
+      "symbol": "TLT"
+    },
+    {
+      "conviction": -0.8,
+      "latency_ms": 3314.5927500445396,
+      "model": "llama3.1:8b",
+      "role": "news_analyst",
+      "served_by_llm": true,
+      "summary": "TLT's bearish outlook is reinforced by recent price decline and bond massacre headlines, despite potential bargain opportunities.",
+      "symbol": "TLT"
+    },
+    {
+      "conviction": -0.8,
+      "latency_ms": 3114.1167079331353,
+      "model": "llama3.1:8b",
+      "role": "peer_reviewer",
+      "served_by_llm": true,
+      "summary": "TLT's bearish outlook is reinforced by recent price decline and bond massacre headlines.",
+      "symbol": "TLT"
+    },
+    {
+      "conviction": -0.7,
+      "latency_ms": 3308.0641250126064,
+      "model": "llama3.1:8b",
+      "role": "researcher",
+      "served_by_llm": true,
+      "summary": "GLD's recent price decline and negative headlines suggest a bearish trend, but interest rate concerns may boost gold prices.",
+      "symbol": "GLD"
+    },
+    {
+      "conviction": -0.5,
+      "latency_ms": 3726.581791997887,
+      "model": "llama3.1:8b",
+      "role": "news_analyst",
+      "served_by_llm": true,
+      "summary": "GLD's bearish trend is tempered by potential interest rate concerns, but recent price decline and negative headlines remain a concern.",
+      "symbol": "GLD"
+    },
+    {
+      "conviction": -0.6,
+      "latency_ms": 3602.5616250699386,
+      "model": "llama3.1:8b",
+      "role": "peer_reviewer",
+      "served_by_llm": true,
+      "summary": "GLD's bearish trend is tempered by interest rate concerns, but recent price decline and negative headlines remain a concern.",
+      "symbol": "GLD"
+    }
+  ],
+  "council_summary": {
+    "calls": 15,
+    "latency_ms": {
+      "max": 4223.674208042212,
+      "mean": 3411.833652939337,
+      "p50": 3314.5927500445396,
+      "p95": 3990.684399893507
+    },
+    "providers": {
+      "llama3.1:8b": 15
+    },
+    "served_by_llm": 15
+  },
+  "decision_council_off": {
+    "model_versions": {
+      "fund_manager": "v1",
+      "research_agent": "v1",
+      "risk_manager": "v1",
+      "strategy_ensemble": "v1"
+    },
+    "risk_flags": [
+      "concentration_top5_scaled"
+    ],
+    "run_id": "ad629194b3bc8488",
+    "symbols": [
+      "SPY",
+      "QQQ",
+      "IWM",
+      "TLT",
+      "GLD"
+    ],
+    "target_weights": {
+      "GLD": -0.194228,
+      "IWM": 0.036464,
+      "QQQ": 0.128499,
+      "SPY": 0.235037,
+      "TLT": -0.205772
+    },
+    "timestamp_utc": "2026-09-29T20:13:41.782784+00:00"
+  },
+  "decision_council_on": {
+    "model_versions": {
+      "fund_manager": "v1",
+      "research_agent": "v1",
+      "risk_manager": "v1",
+      "strategy_ensemble": "v1"
+    },
+    "risk_flags": [
+      "concentration_top5_scaled"
+    ],
+    "run_id": "830a89b78766f89f",
+    "symbols": [
+      "SPY",
+      "QQQ",
+      "IWM",
+      "TLT",
+      "GLD"
+    ],
+    "target_weights": {
+      "GLD": -0.194812,
+      "IWM": 0.034524,
+      "QQQ": 0.129396,
+      "SPY": 0.232569,
+      "TLT": -0.208699
+    },
+    "timestamp_utc": "2026-09-29T20:13:39.505500+00:00"
+  },
+  "elapsed_sec": {
+    "council_off": 2.275871791993268,
+    "council_on": 54.97450191702228
+  },
+  "new_trace_files": [
+    "trace_0a60702209a73d2448de535dd9203a3a.json",
+    "trace_4b0d2002b9193a3d25d56f1133ab3bd6.json"
+  ],
+  "per_symbol": {
+    "GLD": {
+      "council_score": -0.6,
+      "news_analyst": -0.5,
+      "peer_reviewer": -0.6,
+      "researcher": -0.7,
+      "summaries": {
+        "news_analyst": "GLD's bearish trend is tempered by potential interest rate concerns, but recent price decline and negative headlines remain a concern.",
+        "peer_reviewer": "GLD's bearish trend is tempered by interest rate concerns, but recent price decline and negative headlines remain a concern.",
+        "researcher": "GLD's recent price decline and negative headlines suggest a bearish trend, but interest rate concerns may boost gold prices."
+      },
+      "weight_council_off": -0.194228,
+      "weight_council_on": -0.194812
+    },
+    "IWM": {
+      "council_score": -0.033333333333333326,
+      "news_analyst": 0.2,
+      "peer_reviewer": 0.2,
+      "researcher": -0.5,
+      "summaries": {
+        "news_analyst": "IWM's price decline and bearish headlines warrant caution, but a strong sell signal is not indicated.",
+        "peer_reviewer": "IWM's price decline and bearish headlines warrant caution, but a neutral stance is maintained.",
+        "researcher": "IWM's recent price decline and bearish headlines suggest a cautious approach, but not a strong sell signal."
+      },
+      "weight_council_off": 0.036464,
+      "weight_council_on": 0.034524
+    },
+    "QQQ": {
+      "council_score": 0.4333333333333333,
+      "news_analyst": 0.4,
+      "peer_reviewer": 0.6,
+      "researcher": 0.3,
+      "summaries": {
+        "news_analyst": "QQQ maintains a neutral stance with a slight bullish bias, driven by recent price recovery and positive headlines.",
+        "peer_reviewer": "QQQ maintains a neutral stance with a slight bullish bias, driven by recent price recovery and positive headlines.",
+        "researcher": "QQQ is neutral, with a slight bullish bias due to recent price recovery and positive headlines, but volatility remains a concern."
+      },
+      "weight_council_off": 0.128499,
+      "weight_council_on": 0.129396
+    },
+    "SPY": {
+      "council_score": 0.5,
+      "news_analyst": 0.6,
+      "peer_reviewer": 0.7,
+      "researcher": 0.2,
+      "summaries": {
+        "news_analyst": "SPY remains slightly bullish due to recent price stability and positive market sentiment, despite sector-specific volatility.",
+        "peer_reviewer": "SPY remains slightly bullish due to recent price stability and positive market sentiment.",
+        "researcher": "SPY is slightly bullish due to recent price stability and positive market sentiment, despite some sector-specific volatility."
+      },
+      "weight_council_off": 0.235037,
+      "weight_council_on": 0.232569
+    },
+    "TLT": {
+      "council_score": -0.8000000000000002,
+      "news_analyst": -0.8,
+      "peer_reviewer": -0.8,
+      "researcher": -0.8,
+      "summaries": {
+        "news_analyst": "TLT's bearish outlook is reinforced by recent price decline and bond massacre headlines, despite potential bargain opportunities.",
+        "peer_reviewer": "TLT's bearish outlook is reinforced by recent price decline and bond massacre headlines.",
+        "researcher": "TLT is down significantly from its peak, but soaring yields and bond massacre headlines suggest a bearish outlook."
+      },
+      "weight_council_off": -0.205772,
+      "weight_council_on": -0.208699
+    }
+  }
+}

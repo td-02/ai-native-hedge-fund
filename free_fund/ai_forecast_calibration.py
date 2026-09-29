@@ -79,7 +79,8 @@ def _llm_forecast_for_ticker(
     try:
         raw = llm_chat(prompt=prompt, system="You are a quant forecaster.", json_mode=True, timeout=timeout)
         data = json.loads(raw) if raw else {}
-        if not isinstance(data, dict):
+        if not isinstance(data, dict) or not data:
+            # llm_router returns "{}" when every provider failed; that is the fallback path, not an LLM forecast.
             return fallback
         er = float(data.get("expected_return", fallback["expected_return"]))
         un = float(data.get("uncertainty", fallback["uncertainty"]))

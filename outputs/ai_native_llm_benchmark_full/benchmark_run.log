@@ -1,0 +1,40 @@
+[benchmark] Ollama 0.34.4 model=llama3.1:8b warm-up 0.3s -> {"ok":true}
+[benchmark] running AI-native v2 with LLM forecasts ...
+{"error": "Error 61 connecting to localhost:6379. Connection refused.", "event": "health.redis_unavailable", "level": "warning", "timestamp": "2026-09-29T20:17:13.032962Z"}
+{"error": "Error 61 connecting to localhost:6379. Connection refused.", "event": "health.redis_unavailable", "level": "warning", "timestamp": "2026-09-29T20:17:13.040063Z"}
+[benchmark]   1295/1295 forecast calls answered by the LLM in 67.3 min
+[benchmark] running AI-native v2 with the deterministic fallback ...
+{"error": "Error 61 connecting to localhost:6379. Connection refused.", "event": "health.redis_unavailable", "level": "warning", "timestamp": "2026-09-29T21:24:28.738813Z"}
+{"error": "Error 61 connecting to localhost:6379. Connection refused.", "event": "health.redis_unavailable", "level": "warning", "timestamp": "2026-09-29T21:24:28.746210Z"}
+[benchmark] note: baseline Sharpe differs by 1.07e-05 between runs (live yfinance feed drift, not the orchestrator)
+[benchmark] chart written to outputs/media/ai_native_llm_benchmark_equity_full.png
+AI-native LLM benchmark complete.
+                   variant    sharpe      cagr  annual_vol  max_drawdown  total_return  avg_turnover  cycles
+                  baseline  0.010167 -0.002504    0.081479     -0.102926     -0.002574      0.093767   259.0
+          ai_native_v2_llm -0.069780 -0.008959    0.081334     -0.105986     -0.009207      0.108390   259.0
+ai_native_v2_deterministic -0.116655 -0.012615    0.080735     -0.108404     -0.012963      0.111580   259.0
+             benchmark_spy  1.708166  0.372660    0.196709     -0.142729      0.384791           NaN     NaN
+    benchmark_equal_weight  2.375710  0.414825    0.150919     -0.092989      0.428528           NaN     NaN
+### Setup
+
+- Model: `llama3.1:8b` served locally by Ollama 0.34.4 on Apple M5 (24.0 GB).
+- Window: price data 2020-01-01 to 2026-03-01; one decision every 5 trading days, 259 decision cycles from 2021-01-05 to 2026-02-25; universe SPY, QQQ, IWM, TLT, GLD.
+- Config: `configs/ai_native_llm.yaml` (LLM forecasts on, research council on, full orchestrator).
+
+### Backtest comparison
+
+| Variant | Sharpe | CAGR | Vol | Max DD | Total return | Avg turnover |
+|---|---|---|---|---|---|---|
+| Baseline orchestrator (no v2 overlay) | 0.01 | -0.3% | 8.1% | -10.3% | -0.3% | 0.09 |
+| AI-native v2, LLM forecasts (Ollama) | -0.07 | -0.9% | 8.1% | -10.6% | -0.9% | 0.11 |
+| AI-native v2, deterministic fallback | -0.12 | -1.3% | 8.1% | -10.8% | -1.3% | 0.11 |
+| SPY | 1.71 | +37.3% | 19.7% | -14.3% | +38.5% | n/a |
+| Equal weight | 2.38 | +41.5% | 15.1% | -9.3% | +42.9% | n/a |
+
+### LLM usage (proof the AI path ran)
+
+| Variant | LLM calls | Answered by LLM | Forecast source | Provider | Latency p50 / p95 | Wall clock |
+|---|---|---|---|---|---|---|
+| AI-native v2, LLM forecasts (Ollama) | 1295 | 1295 | llm: 1295 | ollama: 1295 | 3.08 s / 3.68 s | 67.3 min |
+| AI-native v2, deterministic fallback | 0 | 0 | deterministic_fallback: 1295 | none | 0.00 s / 0.00 s | 0.8 min |
+

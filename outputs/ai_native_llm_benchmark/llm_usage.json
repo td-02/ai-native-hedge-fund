@@ -1,0 +1,269 @@
+{
+  "args": {
+    "config": "configs/ai_native_llm.yaml",
+    "from_date": "2020-01-01",
+    "live_cycle_only": false,
+    "max_cycles": 60,
+    "media_png": "outputs/media/ai_native_llm_benchmark_equity.png",
+    "min_llm_rate": 0.99,
+    "no_plot": false,
+    "out": "outputs/ai_native_llm_benchmark",
+    "skip_deterministic": false,
+    "skip_live_cycle": false,
+    "step_days": 5,
+    "to_date": "2026-03-01"
+  },
+  "cycles": 60,
+  "decision_end": "2022-03-08",
+  "decision_start": "2021-01-05",
+  "finished_utc": "2026-09-29T20:13:41.786867+00:00",
+  "hardware": {
+    "cpu": "Apple M5",
+    "machine": "arm64",
+    "memory_gb": 24.0,
+    "platform": "macOS-26.6.2-arm64-arm-64bit",
+    "python": "3.11.15"
+  },
+  "llm_router_provider_stats": {
+    "gemini": {
+      "avg_latency": 0.0,
+      "calls": 301.0,
+      "failures": 301.0
+    },
+    "groq": {
+      "avg_latency": 0.0,
+      "calls": 301.0,
+      "failures": 301.0
+    },
+    "ollama": {
+      "avg_latency": 3000.950043866304,
+      "calls": 301.0,
+      "failures": 0.0
+    },
+    "openrouter": {
+      "avg_latency": 0.0,
+      "calls": 301.0,
+      "failures": 301.0
+    }
+  },
+  "ollama": {
+    "base_url": "http://localhost:11434",
+    "installed_models": [
+      "llama3.1:8b"
+    ],
+    "model": "llama3.1:8b",
+    "ollama_version": "0.34.4"
+  },
+  "started_utc": "2026-09-29T19:57:15.235884+00:00",
+  "symbols": [
+    "SPY",
+    "QQQ",
+    "IWM",
+    "TLT",
+    "GLD"
+  ],
+  "usage": {
+    "ai_native_v2_deterministic": {
+      "calls": 0,
+      "elapsed_sec": 11.172335959039629,
+      "forecast_samples": [
+        {
+          "confidence": 0.24,
+          "expected_return": 9.575256598896633e-05,
+          "horizon": "short_term",
+          "source": "deterministic_fallback",
+          "ticker": "SPY",
+          "uncertainty": 0.006075969449930425
+        },
+        {
+          "confidence": 0.24,
+          "expected_return": 0.00019070899311130485,
+          "horizon": "short_term",
+          "source": "deterministic_fallback",
+          "ticker": "QQQ",
+          "uncertainty": 0.0077092319699461525
+        },
+        {
+          "confidence": 0.24,
+          "expected_return": -0.0030564103842559754,
+          "horizon": "short_term",
+          "source": "deterministic_fallback",
+          "ticker": "IWM",
+          "uncertainty": 0.01095347527146668
+        },
+        {
+          "confidence": 0.24,
+          "expected_return": 0.0002457605438941973,
+          "horizon": "short_term",
+          "source": "deterministic_fallback",
+          "ticker": "TLT",
+          "uncertainty": 0.0053781425567165355
+        },
+        {
+          "confidence": 0.24,
+          "expected_return": 0.005526335144572459,
+          "horizon": "short_term",
+          "source": "deterministic_fallback",
+          "ticker": "GLD",
+          "uncertainty": 0.008633493941342212
+        },
+        {
+          "confidence": 0.24,
+          "expected_return": 0.004287568896580197,
+          "horizon": "short_term",
+          "source": "deterministic_fallback",
+          "ticker": "SPY",
+          "uncertainty": 0.006671293758724243
+        },
+        {
+          "confidence": 0.24,
+          "expected_return": 0.002998489325362187,
+          "horizon": "short_term",
+          "source": "deterministic_fallback",
+          "ticker": "QQQ",
+          "uncertainty": 0.009357767298950315
+        },
+        {
+          "confidence": 0.24,
+          "expected_return": 0.011262181608700772,
+          "horizon": "short_term",
+          "source": "deterministic_fallback",
+          "ticker": "IWM",
+          "uncertainty": 0.013333914831311976
+        },
+        {
+          "confidence": 0.24,
+          "expected_return": -0.006502280775401998,
+          "horizon": "short_term",
+          "source": "deterministic_fallback",
+          "ticker": "TLT",
+          "uncertainty": 0.005645865446582757
+        },
+        {
+          "confidence": 0.24,
+          "expected_return": -0.007158524591601001,
+          "horizon": "short_term",
+          "source": "deterministic_fallback",
+          "ticker": "GLD",
+          "uncertainty": 0.011293219393030606
+        }
+      ],
+      "forecast_sources": {
+        "deterministic_fallback": 300
+      },
+      "latency_ms": {
+        "max": 0.0,
+        "mean": 0.0,
+        "p50": 0.0,
+        "p95": 0.0
+      },
+      "providers": {},
+      "served_by_llm": 0,
+      "use_llm_forecasts": false
+    },
+    "ai_native_v2_llm": {
+      "calls": 300,
+      "elapsed_sec": 917.3965510420967,
+      "forecast_samples": [
+        {
+          "confidence": 0.3,
+          "expected_return": 0.00052,
+          "horizon": "short_term",
+          "source": "llm",
+          "ticker": "SPY",
+          "uncertainty": 0.00608
+        },
+        {
+          "confidence": 0.3,
+          "expected_return": -0.0003,
+          "horizon": "short_term",
+          "source": "llm",
+          "ticker": "QQQ",
+          "uncertainty": 0.012
+        },
+        {
+          "confidence": 0.3,
+          "expected_return": 0.00276,
+          "horizon": "short_term",
+          "source": "llm",
+          "ticker": "IWM",
+          "uncertainty": 0.01095
+        },
+        {
+          "confidence": 0.3,
+          "expected_return": -0.015,
+          "horizon": "short_term",
+          "source": "llm",
+          "ticker": "TLT",
+          "uncertainty": 0.013
+        },
+        {
+          "confidence": 0.42,
+          "expected_return": 0.003,
+          "horizon": "short_term",
+          "source": "llm",
+          "ticker": "GLD",
+          "uncertainty": 0.012
+        },
+        {
+          "confidence": 0.42,
+          "expected_return": 0.002,
+          "horizon": "short_term",
+          "source": "llm",
+          "ticker": "SPY",
+          "uncertainty": 0.012
+        },
+        {
+          "confidence": 0.42,
+          "expected_return": 0.003,
+          "horizon": "short_term",
+          "source": "llm",
+          "ticker": "QQQ",
+          "uncertainty": 0.012
+        },
+        {
+          "confidence": 0.42,
+          "expected_return": 0.002,
+          "horizon": "short_term",
+          "source": "llm",
+          "ticker": "IWM",
+          "uncertainty": 0.012
+        },
+        {
+          "confidence": 0.3,
+          "expected_return": -0.00224,
+          "horizon": "intraday",
+          "source": "llm",
+          "ticker": "TLT",
+          "uncertainty": 0.00565
+        },
+        {
+          "confidence": 0.3,
+          "expected_return": -0.012,
+          "horizon": "short_term",
+          "source": "llm",
+          "ticker": "GLD",
+          "uncertainty": 0.015
+        }
+      ],
+      "forecast_sources": {
+        "llm": 300
+      },
+      "latency_ms": {
+        "max": 3767.2797909472138,
+        "mean": 3010.133217505645,
+        "p50": 3087.4690005439334,
+        "p95": 3406.730294425506
+      },
+      "providers": {
+        "ollama": 300
+      },
+      "served_by_llm": 300,
+      "use_llm_forecasts": true
+    }
+  },
+  "warm_up": {
+    "response": "{\"ok\":true}",
+    "warm_up_sec": 0.27865762496367097
+  }
+}

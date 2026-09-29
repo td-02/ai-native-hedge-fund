@@ -1,0 +1,2 @@
+{"error": "Error 61 connecting to localhost:6379. Connection refused.", "event": "health.redis_unavailable", "level": "warning", "timestamp": "2026-09-29T19:36:51.092068Z"}
+f9ada85f44f32e05

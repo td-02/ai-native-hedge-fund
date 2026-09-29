@@ -391,3 +391,104 @@ This is a **research prototype** for paper trading and educational purposes only
 
 MIT — free to use, fork, and build on.
 
+-----
+
+## 🧠 AI-Native Benchmark (LLM paths switched on)
+
+> Run on 2026-09-29 with a local `llama3.1:8b` served by Ollama 0.34.4 on an Apple M5 (24 GB). Paper research only. **Not financial advice.**
+
+### Why this run is different from the tables above
+
+The "AI-native" layers are wired in, but every shipped config takes the deterministic path:
+
+- `backtest.fast_mode: true` makes `run_cycle` skip the LLM research council (`{"mode": "disabled_or_fast_backtest"}`).
+- `ai_native_v2.use_llm_forecasts: false` everywhere, so `generate_ai_forecasts` returns the momentum fallback (`source: deterministic_fallback`).
+- `ainhf run` goes through the slim service pipeline (`runtime.pipeline_mode`), which never calls the council.
+- `configs/backtest_fast.yaml` has no `ai_native_v2` block, so the v2 command above compared the baseline against itself.
+- Even with Ollama up, the council prompt was a bare JSON blob: `llama3.1:8b` echoed it back until the 200-token cap, so every conviction parsed to 0.0 and the research overlay's sentiment never parsed either. Both prompts now put the instruction in a system message and reject replies without the expected keys.
+
+The preset `configs/ai_native_llm.yaml` turns all of it on, and `scripts/benchmark_ai_native.py` probes every LLM call and exits non-zero unless the model actually answered, so these numbers cannot come from the fallback path.
+
+```bash
+ollama serve
+ollama pull llama3.1:8b
+uv run python scripts/benchmark_ai_native.py --config configs/ai_native_llm.yaml \
+  --from-date 2020-01-01 --to-date 2026-03-01 --step-days 5 --max-cycles 60 \
+  --out outputs/ai_native_llm_benchmark
+```
+
+### Setup
+
+- Model: `llama3.1:8b` served locally by Ollama 0.34.4 on Apple M5 (24.0 GB).
+- Window: price data 2020-01-01 to 2026-03-01; one decision every 5 trading days, 60 decision cycles from 2021-01-05 to 2022-03-08; universe SPY, QQQ, IWM, TLT, GLD.
+- Config: `configs/ai_native_llm.yaml` (LLM forecasts on, research council on, full orchestrator).
+
+### Backtest comparison, 60 decision cycles (the README v2 command)
+
+| Variant | Sharpe | CAGR | Vol | Max DD | Total return | Avg turnover |
+|---|---|---|---|---|---|---|
+| Baseline orchestrator (no v2 overlay) | 2.60 | +16.7% | 6.0% | -2.1% | +3.7% | 0.09 |
+| AI-native v2, LLM forecasts (Ollama) | 2.40 | +15.6% | 6.1% | -2.3% | +3.5% | 0.11 |
+| AI-native v2, deterministic fallback | 2.49 | +16.1% | 6.1% | -2.1% | +3.6% | 0.11 |
+| SPY | 0.94 | +12.8% | 13.9% | -6.8% | +2.9% | n/a |
+| Equal weight | 0.62 | +7.0% | 12.1% | -7.0% | +1.6% | n/a |
+
+### LLM usage, 60 decision cycles (proof the AI path ran)
+
+| Variant | LLM calls | Answered by LLM | Forecast source | Provider | Latency p50 / p95 | Wall clock |
+|---|---|---|---|---|---|---|
+| AI-native v2, LLM forecasts (Ollama) | 300 | 300 | llm: 300 | ollama: 300 | 3.09 s / 3.41 s | 15.3 min |
+| AI-native v2, deterministic fallback | 0 | 0 | deterministic_fallback: 300 | none | 0.00 s / 0.00 s | 0.2 min |
+
+### Live decision cycle with the LLM research council
+
+15 council calls (3 roles x 5 symbols), 15 answered by the LLM, latency p50 3.31 s, cycle wall clock 55 s with council vs 2 s without.
+
+| Symbol | Researcher | News analyst | Peer reviewer | Council score | Weight, council on | Weight, council off |
+|---|---|---|---|---|---|---|
+| SPY | +0.20 | +0.60 | +0.70 | +0.500 | 0.233 | 0.235 |
+| QQQ | +0.30 | +0.40 | +0.60 | +0.433 | 0.129 | 0.128 |
+| IWM | -0.50 | +0.20 | +0.20 | -0.033 | 0.035 | 0.036 |
+| TLT | -0.80 | -0.80 | -0.80 | -0.800 | -0.209 | -0.206 |
+| GLD | -0.70 | -0.50 | -0.60 | -0.600 | -0.195 | -0.194 |
+
+![AI-native LLM benchmark equity curves](outputs/media/ai_native_llm_benchmark_equity.png)
+
+### Full-period run (every cycle)
+
+Same preset and model, every available decision cycle: decisions from 2021-01-05 to 2026-02-25 (259 cycles, 1295 forecast calls, 67 min of local inference).
+
+#### Backtest comparison, full period
+
+| Variant | Sharpe | CAGR | Vol | Max DD | Total return | Avg turnover |
+|---|---|---|---|---|---|---|
+| Baseline orchestrator (no v2 overlay) | 0.01 | -0.3% | 8.1% | -10.3% | -0.3% | 0.09 |
+| AI-native v2, LLM forecasts (Ollama) | -0.07 | -0.9% | 8.1% | -10.6% | -0.9% | 0.11 |
+| AI-native v2, deterministic fallback | -0.12 | -1.3% | 8.1% | -10.8% | -1.3% | 0.11 |
+| SPY | 1.71 | +37.3% | 19.7% | -14.3% | +38.5% | n/a |
+| Equal weight | 2.38 | +41.5% | 15.1% | -9.3% | +42.9% | n/a |
+
+#### LLM usage, full period
+
+| Variant | LLM calls | Answered by LLM | Forecast source | Provider | Latency p50 / p95 | Wall clock |
+|---|---|---|---|---|---|---|
+| AI-native v2, LLM forecasts (Ollama) | 1295 | 1295 | llm: 1295 | ollama: 1295 | 3.08 s / 3.68 s | 67.3 min |
+| AI-native v2, deterministic fallback | 0 | 0 | deterministic_fallback: 1295 | none | 0.00 s / 0.00 s | 0.8 min |
+
+![AI-native LLM benchmark, full period](outputs/media/ai_native_llm_benchmark_equity_full.png)
+
+### Reading the numbers
+
+- **The AI path really ran.** 300 forecast calls in the 60-cycle run, 1,295 in the full-period run and all 15 council calls were answered by `llama3.1:8b`; the cloud providers in `llm_router.py` (Groq, Gemini, OpenRouter) failed instantly on missing keys and Ollama answered every time. The deterministic variant made zero LLM calls. Forecast samples are in `outputs/ai_native_llm_benchmark*/llm_usage.json`; the council transcripts and the on/off decisions are in `council_live_cycle.json` and in the audit ledger.
+- **The LLM forecasts do not add alpha over the baseline in either window.** On the 60 decision days (January 2021 to March 2022) the LLM variant trailed the baseline by 0.20 Sharpe and its own deterministic fallback by 0.09 (2.31 and 2.40 in two separate runs against 2.60). Over the full period (259 decision days, January 2021 to February 2026) the baseline is flat at 0.01, the LLM variant sits at -0.07 and the deterministic fallback at -0.12, so the LLM flavour edges the fallback there but both remain below the weights they tilt.
+- **Why the effect is small either way.** The v2 overlay only tilts weights when its objective is positive and the last ten cycles were not underperforming; those no-harm guards left the baseline weights untouched on 49 of 60 and 228 of 259 cycles for the LLM variant. When it did act, the average absolute weight change was 0.01 to 0.03 and turnover rose from 0.09 to 0.11 per cycle. The 8B model only sees three summary statistics per ticker (20-day mean, 5-day mean, volatility) and answers with low confidence (0.3 to 0.42) and tiny expected returns, so the layer mostly re-expresses momentum with extra noise and extra trading cost.
+- **The bigger finding is about the baseline, not the LLM.** In the 60-cycle window all three strategy variants beat SPY and equal weight on risk-adjusted terms (Sharpe 2.4 to 2.6 at 6% volatility against 0.94 and 0.62 at 12 to 14%). Over the full period the same five-ETF orchestrator lost 0.3% with a 10% drawdown while SPY and equal weight made 38% and 43% on the same sampled days. That early window is not representative, and an AI layer that tilts weights by a few percent cannot rescue a signal stack that is flat.
+- **The council is live but light-touch.** Its convictions are coherent across the three roles and match the headlines it fetched (TLT at -0.80 during a bond sell-off, SPY at +0.50), but at `blend_weight: 0.10` it moved the final weights by at most 0.003 after the fund-manager and risk stages. It costs about 53 s per live cycle on this laptop (15 calls at 3.3 s); the forecast layer costs 3.1 s per ticker per cycle, so the full-period run was 67 minutes of local inference.
+
+### Caveats
+
+- Metrics are exactly what the project's `backtest_ai_native_v2.py` computes: only the trading day after each decision is counted (about one day in five), for the strategies and the benchmarks alike, and Sharpe/CAGR are annualised with 252 over those days. Comparisons are like-for-like, but the absolute returns are not full-period buy-and-hold numbers.
+- The v2 LLM forecasts are point-in-time (the prompt only sees trailing return statistics from the backtest window). The research council's tools fetch *current* prices and headlines, so the council is benchmarked on a live cycle rather than inside the backtest.
+- A local 8B model at temperature 0.1 is not deterministic; re-running will move the LLM variant slightly.
+- Prices are pulled from yfinance at run time and the feed is not bit-stable: the same deterministic run repeated 15 minutes apart differed in the sixth decimal of the weights, so the baseline row can drift at the fourth decimal between runs.
+- Two fixes were needed to get here: the three backtest scripts were missing `from pathlib import Path` (they crashed when writing results), and an empty reply from the LLM router was being tagged `source: llm` instead of falling back.
